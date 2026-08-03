@@ -8,7 +8,8 @@
     ".": "./src/index.ts",
     "./types": "./src/types/index.ts",
     "./generation": "./src/generation/index.ts",
-    "./shopping": "./src/shopping/index.ts"
+    "./shopping": "./src/shopping/index.ts",
+    "./normalize": "./src/normalize/index.ts"
   },
   "scripts": {
     "test": "vitest run",
