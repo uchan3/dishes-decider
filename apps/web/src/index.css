@@ -618,3 +618,56 @@ a {
 .slot__link:hover {
   text-decoration: underline;
 }
+
+/* --- ソース管理 --- */
+.source-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.source-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.source-item:last-child {
+  border-bottom: none;
+}
+
+.source-item__main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.source-item__name {
+  font-weight: 600;
+}
+
+.source-item__meta {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.switch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.switch input {
+  width: 18px;
+  height: 18px;
+}
