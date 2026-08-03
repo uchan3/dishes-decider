@@ -84,7 +84,9 @@ pnpm --filter @recipe-planner/web typecheck
 `packages/core` はビルド不要（`.ts` ソースを Vite / Deno が直接消費する）。`exports` は `.ts` を指し、Vite 側は `optimizeDeps.exclude` で prebundle を回避している。`supabase/functions` は未スキャフォールド。
 
 ### apps/web の構成
-- Vite + React 19 + React Router v7 + vite-plugin-pwa。UI は `src/routes/`（Home=献立生成 / Library / Add(未実装) / Shopping / Settings）、共通シェルは `src/components/Layout.tsx`（下部タブ）
+- Vite + React 19 + React Router v7 + vite-plugin-pwa。UI は `src/routes/`（Home=献立生成 / Library / Add=手動レシピ登録 / Shopping / Settings）、共通シェルは `src/components/Layout.tsx`（下部タブ）
+- 手動レシピ登録は `src/lib/recipeForm.ts`（保存）＋ `src/lib/ingredients.ts`（`matchMaster`: core の正規化キーで既存マスタ照合、未ヒットは新規マスタ作成）
+- 注意: `recipes` の Dexie インデックスは `id, source_id, *dish_roles, last_cooked_at` のみ。`title` 等の非インデックス列で `orderBy` するとエラーになるため、メモリ内ソートする
 - `src/db/` — Dexie。**行は snake_case で保持**（Supabase と 1:1 同期のため）、`mappers.ts` で core の camelCase ドメイン型へ変換。IndexedDB は boolean をキーにできないため `is_checked` 等はインデックスせずメモリでフィルタ
 - `src/lib/planning.ts` — core (`generateMealPlan` / `aggregateShoppingList`) と Dexie を繋ぐ層。`generateWeek()` が献立を生成し Dexie に保存、`buildShoppingItems()` が買い物リストを集約
 - `src/db/seed.ts` — 開発用サンプルデータ（抽出パイプライン未実装のため。設定画面から投入）
@@ -94,6 +96,7 @@ pnpm --filter @recipe-planner/web typecheck
 - `src/types/` — 共有ドメイン型（DB は snake_case、ドメイン層は camelCase。変換は永続化層の責務）
 - `src/generation/` — 献立生成。`generateMealPlan()` が入口。`rng.ts`(seeded RNG + softmax) / `scoring.ts`(F-02-2 の重み付け) / `generate.ts`(候補構築→フィルタ→サンプリング→多様性再抽選→制約緩和)。**乱数は注入可能**（テストは `mulberry32` で決定論化）
 - `src/shopping/` — 買い物リスト集約。`aggregateShoppingList()` が入口。`units.ts`(単位分類・換算 §5.3) / `aggregate.ts`(展開→スケール→グルーピング→合算→常備品除外→売場順ソート)
+- `src/normalize/` — 食材名の正規化。`normalizeIngredientName()`(NFKC→ひらがな化→空白除去→小文字化)。手動入力と抽出パイプラインが共有する照合キー生成
 - `src/testing.ts` — テスト専用ファクトリ（`index.ts` からは公開しない）
 
 ## 実装の優先順位
