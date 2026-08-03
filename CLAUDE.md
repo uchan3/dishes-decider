@@ -89,7 +89,8 @@ pnpm --filter @recipe-planner/web typecheck
 - 手動レシピ登録は `src/lib/recipeForm.ts`（保存）＋ `src/lib/ingredients.ts`（`matchMaster`: core の正規化キーで既存マスタ照合、未ヒットは新規マスタ作成）
 - 注意: `recipes` の Dexie インデックスは `id, source_id, *dish_roles, last_cooked_at` のみ。`title` 等の非インデックス列で `orderBy` するとエラーになるため、メモリ内ソートする
 - `src/db/` — Dexie。**行は snake_case で保持**（Supabase と 1:1 同期のため）、`mappers.ts` で core の camelCase ドメイン型へ変換。IndexedDB は boolean をキーにできないため `is_checked` 等はインデックスせずメモリでフィルタ
-- `src/lib/planning.ts` — core (`generateMealPlan` / `aggregateShoppingList`) と Dexie を繋ぐ層。`generateWeek()` が献立を生成し Dexie に保存、`buildShoppingItems()` が買い物リストを集約。再抽選(US-05)/ロック(US-06): `reshuffleSlot`(必ず別レシピ・代替無ければ現状維持) / `reshuffleMeal` / `reshuffleWeek`(いずれもロック維持) / `toggleSlotLock`。共通ロジックは `reshuffleSlots`（対象外・ロック済みのレシピを除外して再抽選）。生成・再抽選とも `loadEligibleRecipes()` 経由でレシピを読み、**無効ソース(`is_enabled=false`)のレシピを除外**(US-03)。ソースのトグルは設定画面
+- `src/lib/planning.ts` — core (`generateMealPlan` / `aggregateShoppingList`) と Dexie を繋ぐ層。`generateWeek()` が献立を生成し Dexie に保存、`buildShoppingItems()` が買い物リストを集約。**週の「作り直す」は常に `generateWeek`**（現在の曜日テンプレで構造から再生成し、既存プランのロック済みスロットを slotId 一致で引き継ぐ）。スロット/食事の再抽選(US-05): `reshuffleSlot`(必ず別レシピ・代替無ければ現状維持) / `reshuffleMeal`（ロック維持）/ `toggleSlotLock`(US-06)。共通ロジックは `reshuffleSlots`（対象外・ロック済みのレシピを除外して再抽選）。生成・再抽選とも `loadEligibleRecipes()` 経由でレシピを読み、**無効ソース(`is_enabled=false`)のレシピを除外**(US-03)
+- 曜日ごとの献立構成(US-07): `lib/mealTemplates.ts`（プリセット6種＋月起点の週割り当て）＋ `lib/settings.ts`（Dexie の `settings` KVストア。schema **v2** で追加）。設定画面で曜日別にテンプレ選択。`eat_out`(空スロット) の日は `is_skipped` の Meal になり生成対象外
 - `src/db/seed.ts` — 開発用サンプルデータ（抽出パイプライン未実装のため。設定画面から投入）
 - **オフライン同期（outbox → Supabase）は未実装**。現状 Dexie はローカルのみ
 
