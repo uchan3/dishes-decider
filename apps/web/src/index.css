@@ -224,7 +224,14 @@ a {
 .slot {
   display: flex;
   gap: 10px;
-  align-items: baseline;
+  align-items: center;
+}
+
+.slot--locked {
+  background: var(--notice-bg);
+  border-radius: 6px;
+  margin: 0 -4px;
+  padding: 2px 4px;
 }
 
 .slot__role {
@@ -235,6 +242,43 @@ a {
 
 .slot__recipe {
   font-size: 0.95rem;
+  flex: 1;
+}
+
+.slot__actions {
+  display: flex;
+  gap: 2px;
+}
+
+.icon-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.95rem;
+  line-height: 1;
+  padding: 4px 6px;
+  border-radius: 6px;
+  opacity: 0.65;
+}
+
+.icon-btn:hover:not(:disabled) {
+  background: var(--bg);
+  opacity: 1;
+}
+
+.icon-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.icon-btn--on {
+  opacity: 1;
+}
+
+.day-card__date .icon-btn {
+  margin-top: 4px;
+  font-size: 0.8rem;
 }
 
 /* --- レシピ一覧 --- */
