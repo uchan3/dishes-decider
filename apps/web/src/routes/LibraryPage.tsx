@@ -12,7 +12,14 @@ const ROLE_LABEL: Record<string, string> = {
 
 /** レシピライブラリ画面。Dexie のレシピ一覧をライブ表示する。 */
 export function LibraryPage() {
-  const recipes = useLiveQuery(() => db.recipes.orderBy("title").toArray(), []);
+  // title はインデックス外のためメモリ内でソートする（Dexie の orderBy はインデックス必須）。
+  const recipes = useLiveQuery(
+    async () => {
+      const rows = await db.recipes.toArray();
+      return rows.sort((a, b) => a.title.localeCompare(b.title, "ja"));
+    },
+    [],
+  );
 
   if (!recipes) return <p className="muted">読み込み中…</p>;
 

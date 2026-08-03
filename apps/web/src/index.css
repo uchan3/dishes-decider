@@ -327,3 +327,178 @@ a {
   text-decoration: line-through;
   color: var(--muted);
 }
+
+/* --- フォーム --- */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field__label {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.field-row {
+  display: flex;
+  gap: 12px;
+}
+
+.field-row .field {
+  flex: 1;
+}
+
+.form input,
+.form select {
+  font: inherit;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  width: 100%;
+}
+
+.form input:disabled {
+  background: var(--bg);
+  color: var(--muted);
+}
+
+.checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.9rem;
+}
+
+.checkbox-field input {
+  width: auto;
+}
+
+.form__section {
+  margin: 8px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.chip {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.chip--on {
+  background: var(--primary);
+  color: var(--primary-ink);
+  border-color: var(--primary);
+}
+
+.ing-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ing-row {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ing-row__inputs {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.ing-name {
+  flex: 3;
+}
+
+.ing-qty {
+  flex: 1;
+  min-width: 56px;
+}
+
+.ing-unit {
+  flex: 1.2;
+  min-width: 64px;
+}
+
+.ing-remove {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.ing-row__meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+}
+
+.ing-ambiguous {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+}
+
+.ing-ambiguous input {
+  width: auto;
+}
+
+.ing-hint {
+  font-size: 0.78rem;
+}
+
+.ing-hint--match {
+  color: var(--primary);
+}
+
+.ing-hint--new {
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ing-hint--new select {
+  width: auto;
+  padding: 4px 6px;
+  font-size: 0.78rem;
+}
+
+.error-list {
+  margin: 0;
+  padding-left: 18px;
+}
