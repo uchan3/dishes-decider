@@ -1,0 +1,329 @@
+:root {
+  --bg: #f7f7f5;
+  --surface: #ffffff;
+  --border: #e5e5e0;
+  --text: #1a1a1a;
+  --muted: #6b7280;
+  --primary: #2f855a;
+  --primary-ink: #ffffff;
+  --danger: #c53030;
+  --notice-bg: #eef6f1;
+  --warn-bg: #fdf3e7;
+  --tabbar-h: 60px;
+  font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+.app {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.content {
+  flex: 1;
+  padding: 16px 16px calc(var(--tabbar-h) + 24px);
+  max-width: 640px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+h1 {
+  font-size: 1.35rem;
+  margin: 4px 0 12px;
+}
+
+h2 {
+  font-size: 1.05rem;
+  margin: 0 0 8px;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+a {
+  color: var(--primary);
+}
+
+/* --- 下部タブナビ --- */
+.tabbar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
+  padding-bottom: env(safe-area-inset-bottom);
+  display: flex;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+
+.tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  text-decoration: none;
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.tab--active {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.tab__icon {
+  font-size: 1.3rem;
+}
+
+/* --- ボタン --- */
+.btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  padding: 9px 16px;
+  border-radius: 10px;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btn--primary {
+  background: var(--primary);
+  color: var(--primary-ink);
+  border-color: var(--primary);
+}
+
+.btn--danger {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.btn--block {
+  display: block;
+  text-align: center;
+  text-decoration: none;
+  margin-top: 16px;
+}
+
+.btn-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* --- 汎用 --- */
+.empty {
+  padding: 32px 16px;
+  text-align: center;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  margin: 12px 0;
+}
+
+.notice {
+  background: var(--notice-bg);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  margin: 8px 0;
+}
+
+.notice--warn {
+  background: var(--warn-bg);
+}
+
+.toggle {
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* --- 献立 --- */
+.day-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.day-card {
+  display: flex;
+  gap: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.day-card__date {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 40px;
+}
+
+.day-card__dow {
+  font-weight: 700;
+}
+
+.day-card__num {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.slot-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.slot {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.slot__role {
+  font-size: 0.75rem;
+  color: var(--muted);
+  min-width: 32px;
+}
+
+.slot__recipe {
+  font-size: 0.95rem;
+}
+
+/* --- レシピ一覧 --- */
+.recipe-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.recipe-item {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.recipe-item__main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.recipe-item__title {
+  font-weight: 600;
+}
+
+.recipe-item__meta {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.tags {
+  margin-top: 6px;
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.tag {
+  font-size: 0.72rem;
+  background: var(--notice-bg);
+  color: var(--primary);
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+/* --- 買い物リスト --- */
+.shop-group {
+  margin: 16px 0;
+}
+
+.shop-group__head {
+  font-size: 0.95rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+}
+
+.shop-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.shop-item label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  cursor: pointer;
+}
+
+.shop-item__name {
+  flex: 1;
+}
+
+.shop-item__qty {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.shop-item__note {
+  font-style: normal;
+  color: var(--primary);
+}
+
+.shop-item--done .shop-item__name {
+  text-decoration: line-through;
+  color: var(--muted);
+}
