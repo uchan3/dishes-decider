@@ -154,7 +154,13 @@ export function HomePage() {
                     <li key={slot.id} className={slot.is_locked ? "slot slot--locked" : "slot"}>
                       <span className="slot__role">{ROLE_LABEL[slot.dish_role] ?? slot.dish_role}</span>
                       <span className="slot__recipe">
-                        {slot.recipe_id ? titleById?.get(slot.recipe_id) ?? slot.recipe_id : "—"}
+                        {slot.recipe_id ? (
+                          <Link to={`/recipe/${slot.recipe_id}`} className="slot__link">
+                            {titleById?.get(slot.recipe_id) ?? slot.recipe_id}
+                          </Link>
+                        ) : (
+                          "—"
+                        )}
                       </span>
                       <span className="slot__actions">
                         <button

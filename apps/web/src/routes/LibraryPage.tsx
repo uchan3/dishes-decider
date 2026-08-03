@@ -42,26 +42,29 @@ export function LibraryPage() {
       <h1>レシピ（{recipes.length}）</h1>
       <ul className="recipe-list">
         {recipes.map((r) => (
-          <li key={r.id} className="recipe-item">
-            <div className="recipe-item__main">
-              <span className="recipe-item__title">
-                {r.is_favorite && "★ "}
-                {r.title}
-              </span>
-              <span className="recipe-item__meta">
-                {r.dish_roles.map((role) => ROLE_LABEL[role] ?? role).join("・")}
-                {r.cook_time_min !== null && ` ・ ${r.cook_time_min}分`}
-              </span>
-            </div>
-            {r.tags.length > 0 && (
-              <div className="tags">
-                {r.tags.map((t) => (
-                  <span key={t} className="tag">
-                    {t}
-                  </span>
-                ))}
+          <li key={r.id}>
+            <Link to={`/recipe/${r.id}`} className="recipe-item">
+              <div className="recipe-item__main">
+                <span className="recipe-item__title">
+                  {r.is_favorite && "★ "}
+                  {r.title}
+                  {r.is_excluded && <span className="recipe-item__excluded"> 除外中</span>}
+                </span>
+                <span className="recipe-item__meta">
+                  {r.dish_roles.map((role) => ROLE_LABEL[role] ?? role).join("・")}
+                  {r.cook_time_min !== null && ` ・ ${r.cook_time_min}分`}
+                </span>
               </div>
-            )}
+              {r.tags.length > 0 && (
+                <div className="tags">
+                  {r.tags.map((t) => (
+                    <span key={t} className="tag">
+                      {t}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </Link>
           </li>
         ))}
       </ul>

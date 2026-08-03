@@ -84,7 +84,8 @@ pnpm --filter @recipe-planner/web typecheck
 `packages/core` はビルド不要（`.ts` ソースを Vite / Deno が直接消費する）。`exports` は `.ts` を指し、Vite 側は `optimizeDeps.exclude` で prebundle を回避している。`supabase/functions` は未スキャフォールド。
 
 ### apps/web の構成
-- Vite + React 19 + React Router v7 + vite-plugin-pwa。UI は `src/routes/`（Home=献立生成 / Library / Add=手動レシピ登録 / Shopping / Settings）、共通シェルは `src/components/Layout.tsx`（下部タブ）
+- Vite + React 19 + React Router v7 + vite-plugin-pwa。UI は `src/routes/`（Home=献立生成 / Library / RecipeDetail=`/recipe/:id` / Add=手動レシピ登録 / Shopping / Settings）、共通シェルは `src/components/Layout.tsx`（下部タブ）
+- レシピ詳細(`/recipe/:id`): 材料・原典リンク・お気に入り/タグ編集・除外(「もう出さないで」)。手順は原典が YouTube なら iframe 埋め込み(`lib/youtube.ts`)、不可なら原典リンク(§3.6/§3.7)。編集は `lib/recipeEdit.ts`
 - 手動レシピ登録は `src/lib/recipeForm.ts`（保存）＋ `src/lib/ingredients.ts`（`matchMaster`: core の正規化キーで既存マスタ照合、未ヒットは新規マスタ作成）
 - 注意: `recipes` の Dexie インデックスは `id, source_id, *dish_roles, last_cooked_at` のみ。`title` 等の非インデックス列で `orderBy` するとエラーになるため、メモリ内ソートする
 - `src/db/` — Dexie。**行は snake_case で保持**（Supabase と 1:1 同期のため）、`mappers.ts` で core の camelCase ドメイン型へ変換。IndexedDB は boolean をキーにできないため `is_checked` 等はインデックスせずメモリでフィルタ
