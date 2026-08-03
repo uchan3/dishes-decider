@@ -9,6 +9,7 @@ import {
   aggregateShoppingList,
   generateMealPlan,
   type DishRole,
+  type Recipe,
   type RecipeForShopping,
   type ShoppingItem,
   type SlotRequest,
@@ -16,6 +17,21 @@ import {
 import { db, type MealPlanRow, type MealRow, type PlanSlotRow } from "../db/schema.ts";
 import { toIngredient, toRecipe, toRecipeIngredient } from "../db/mappers.ts";
 import { addDays, isWeekend, today } from "./date.ts";
+
+/**
+ * 献立生成の対象レシピを読み込む。無効化されたソース（`is_enabled=false`）に属する
+ * レシピは除外する（US-03）。`source_id` が無い/未知のレシピは対象に含める。
+ */
+async function loadEligibleRecipes(): Promise<Recipe[]> {
+  const [recipeRows, sources] = await Promise.all([
+    db.recipes.toArray(),
+    db.sources.toArray(),
+  ]);
+  const disabled = new Set(sources.filter((s) => !s.is_enabled).map((s) => s.id));
+  return recipeRows
+    .filter((r) => !(r.source_id !== null && disabled.has(r.source_id)))
+    .map(toRecipe);
+}
 
 /** 曜日ごとのスロット構成（平日=標準 / 土日=がっつり）。 */
 function templateFor(date: string): DishRole[] {
@@ -57,8 +73,7 @@ export interface GeneratedWeek {
  * @returns 生成された献立と緩和情報
  */
 export async function generateWeek(startDate: string): Promise<GeneratedWeek> {
-  const recipeRows = await db.recipes.toArray();
-  const recipes = recipeRows.map(toRecipe);
+  const recipes = await loadEligibleRecipes();
   const { slots, slotDate } = buildWeekSlots(startDate);
 
   const result = generateMealPlan({
@@ -167,7 +182,7 @@ async function reshuffleSlots(
     if (forceChange && slot.recipe_id) excluded.add(slot.recipe_id);
   }
 
-  const recipes = (await db.recipes.toArray()).map(toRecipe);
+  const recipes = await loadEligibleRecipes();
   const result = generateMealPlan({
     slots: regen.map(({ slot, date }) => ({
       slotId: slot.id,
