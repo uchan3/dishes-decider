@@ -74,9 +74,21 @@ pnpm -r typecheck                  # 全パッケージの型検査（tsc --noEm
 pnpm --filter @recipe-planner/core test
 pnpm --filter @recipe-planner/core test:watch
 pnpm --filter @recipe-planner/core exec vitest run src/generation/generate.test.ts  # 単一ファイル
+
+# apps/web (PWA)
+pnpm --filter @recipe-planner/web dev       # 開発サーバ
+pnpm --filter @recipe-planner/web build     # 本番ビルド（vite build、PWA SW 生成）
+pnpm --filter @recipe-planner/web typecheck
 ```
 
-`packages/core` はビルド不要（`.ts` ソースを Vite / Deno が直接消費する）。`exports` は `.ts` を指す。`apps/web`・`supabase/functions` は未スキャフォールド。
+`packages/core` はビルド不要（`.ts` ソースを Vite / Deno が直接消費する）。`exports` は `.ts` を指し、Vite 側は `optimizeDeps.exclude` で prebundle を回避している。`supabase/functions` は未スキャフォールド。
+
+### apps/web の構成
+- Vite + React 19 + React Router v7 + vite-plugin-pwa。UI は `src/routes/`（Home=献立生成 / Library / Add(未実装) / Shopping / Settings）、共通シェルは `src/components/Layout.tsx`（下部タブ）
+- `src/db/` — Dexie。**行は snake_case で保持**（Supabase と 1:1 同期のため）、`mappers.ts` で core の camelCase ドメイン型へ変換。IndexedDB は boolean をキーにできないため `is_checked` 等はインデックスせずメモリでフィルタ
+- `src/lib/planning.ts` — core (`generateMealPlan` / `aggregateShoppingList`) と Dexie を繋ぐ層。`generateWeek()` が献立を生成し Dexie に保存、`buildShoppingItems()` が買い物リストを集約
+- `src/db/seed.ts` — 開発用サンプルデータ（抽出パイプライン未実装のため。設定画面から投入）
+- **オフライン同期（outbox → Supabase）は未実装**。現状 Dexie はローカルのみ
 
 ### packages/core の構成
 - `src/types/` — 共有ドメイン型（DB は snake_case、ドメイン層は camelCase。変換は永続化層の責務）
