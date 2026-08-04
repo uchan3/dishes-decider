@@ -1,18 +1,26 @@
 /**
  * POST /ingest — レシピ取り込みエンドポイント（architecture §3）。
  *
- * iOS ショートカットから URL を受け取り、即 202 を返してから
- * `EdgeRuntime.waitUntil()` で抽出を継続する（ショートカットを待たせない）。
+ * iOS ショートカット / PWA から `Authorization: Bearer <ingest-token>` と `{ url }` を
+ * 受け取り、即 202 を返してから `EdgeRuntime.waitUntil()` で抽出を継続する。
  *
- * 現状: 抽出パイプラインまでを配線。DB 永続化（import_jobs / recipes 挿入）と
- * ingest トークン照合・レート制限は Supabase プロジェクト作成後に有効化する（下記 TODO）。
+ * フロー: トークン照合 → レート制限 → import_jobs(pending) → 202 →
+ *   （背景）取得→JSON-LD/LLM抽出→類似度ゲート→recipes 挿入→job 更新。
+ *   結果は import_jobs の Realtime 変更で PWA に届く。
  */
 
 import { validateExternalUrl } from "@recipe-planner/core/extraction";
 import { runExtraction } from "../_shared/pipeline.ts";
 import { selectProvider } from "../_shared/provider-select.ts";
+import {
+  createImportJob,
+  failJob,
+  persistExtraction,
+  resolveIngestToken,
+  serviceClient,
+  withinRateLimit,
+} from "../_shared/db.ts";
 
-/** waitUntil を持たない環境（ローカル）でも動くフォールバック。 */
 interface EdgeRuntimeLike {
   waitUntil(promise: Promise<unknown>): void;
 }
@@ -20,7 +28,7 @@ declare const EdgeRuntime: EdgeRuntimeLike | undefined;
 
 function runInBackground(promise: Promise<unknown>): void {
   if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(promise);
-  else void promise; // ローカル: 発火して忘れる
+  else void promise;
 }
 
 const json = (body: unknown, status: number): Response =>
@@ -29,11 +37,18 @@ const json = (body: unknown, status: number): Response =>
     headers: { "content-type": "application/json" },
   });
 
+/** Authorization ヘッダから Bearer トークンを取り出す。 */
+function bearerToken(req: Request): string | null {
+  const auth = req.headers.get("authorization") ?? "";
+  const m = auth.match(/^Bearer\s+(.+)$/i);
+  return m ? (m[1] as string).trim() : null;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method !== "POST") return json({ error: "POST のみ許可" }, 405);
 
-  // TODO(supabase): Authorization: Bearer <ingest-token> をハッシュ照合して user_id を解決。
-  //   レート制限（1 トークン 60 件/時）とリボーク（revoked_at）もここで判定する。
+  const token = bearerToken(req);
+  if (!token) return json({ error: "ingest トークンが必要です" }, 401);
 
   let payload: { url?: string };
   try {
@@ -47,8 +62,16 @@ Deno.serve(async (req: Request) => {
   const check = validateExternalUrl(url);
   if (!check.ok) return json({ error: check.reason }, 400);
 
-  // TODO(supabase): import_jobs に status=pending で INSERT し、その id を返す。
-  const jobId = crypto.randomUUID();
+  const db = serviceClient();
+
+  const userId = await resolveIngestToken(db, token);
+  if (!userId) return json({ error: "無効な ingest トークンです" }, 401);
+
+  if (!(await withinRateLimit(db, userId))) {
+    return json({ error: "レート上限に達しました（1時間あたり60件）" }, 429);
+  }
+
+  const jobId = await createImportJob(db, userId, url);
 
   // 即 202。抽出はバックグラウンドで継続。
   runInBackground(
@@ -56,15 +79,9 @@ Deno.serve(async (req: Request) => {
       try {
         const provider = selectProvider();
         const { result, method, finalUrl } = await runExtraction(url, { provider });
-        // TODO(supabase): recipes / recipe_ingredients に INSERT、
-        //   import_jobs を status=success に UPDATE、Realtime で PWA に通知。
-        console.log(
-          `[ingest] extracted via ${method} from ${finalUrl}: ` +
-            `${result.title} (${result.ingredients.length} ingredients, ${result.steps.length} steps)`,
-        );
+        await persistExtraction(db, userId, jobId, finalUrl, method, result);
       } catch (err) {
-        // TODO(supabase): import_jobs を status=failed に UPDATE。
-        console.error(`[ingest] extraction failed for ${url}:`, err);
+        await failJob(db, jobId, err instanceof Error ? err.message : String(err));
       }
     })(),
   );
