@@ -8,3 +8,5 @@ export * from "./types/index.ts";
 export * from "./generation/index.ts";
 export * from "./shopping/index.ts";
 export * from "./normalize/index.ts";
+export * from "./similarity/index.ts";
+export * from "./extraction/index.ts";

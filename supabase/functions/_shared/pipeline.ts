@@ -1,0 +1,108 @@
+/**
+ * 抽出パイプラインのオーケストレーション（architecture §3）。
+ *
+ *   取得 → JSON-LD 高速経路（あれば LLM スキップ）または LLM 抽出 →
+ *   類似度ゲート → 原文破棄 → 構造化結果。
+ *
+ * 原文はこの関数内で使い切り、返り値・DB には残さない（§3.4）。
+ */
+
+import {
+  applySimilarityGate,
+  extractJsonLdBlocks,
+  extractRecipeFromJsonLd,
+  htmlToText,
+  SIMILARITY_THRESHOLDS,
+  type ExtractionMethod,
+  type ExtractionProvider,
+  type RecipeExtractionResult,
+} from "@recipe-planner/core/extraction";
+import { safeFetch } from "./fetch.ts";
+
+/** パイプラインの結果（DB に保存できる構造化データのみ）。 */
+export interface PipelineResult {
+  result: RecipeExtractionResult;
+  method: ExtractionMethod;
+  finalUrl: string;
+}
+
+/** パイプライン設定。 */
+export interface PipelineOptions {
+  /** 手順要約の再生成に使うプロバイダ（LLM）。 */
+  provider: ExtractionProvider;
+  /** 類似度閾値（既定: 私的利用 0.6）。 */
+  threshold?: number;
+}
+
+/**
+ * URL からレシピを抽出する。
+ *
+ * JSON-LD が取れれば LLM をスキップ（コスト 0）。取れなければ本文を LLM に投げる。
+ * いずれの経路でも手順要約は類似度ゲートを通す。
+ */
+export async function runExtraction(
+  url: string,
+  options: PipelineOptions,
+): Promise<PipelineResult> {
+  const threshold = options.threshold ?? SIMILARITY_THRESHOLDS.private;
+  const fetched = await safeFetch(url);
+
+  // Tier 0: JSON-LD 直接マッピング。
+  const jsonLd = extractRecipeFromJsonLd(extractJsonLdBlocks(fetched.body));
+  if (jsonLd && jsonLd.result.ingredients.length > 0) {
+    const gatedSteps = await gateSteps(
+      jsonLd.result,
+      jsonLd.originalStepTexts,
+      options.provider,
+      threshold,
+    );
+    return {
+      result: { ...jsonLd.result, steps: gatedSteps },
+      method: "jsonld",
+      finalUrl: fetched.finalUrl,
+    };
+  }
+
+  // Tier 1/2: 本文を LLM に投げる。
+  const text = htmlToText(fetched.body);
+  const extraction = await options.provider.extract({
+    url: fetched.finalUrl,
+    text,
+    titleHint: null,
+  });
+  const gatedSteps = await gateSteps(
+    extraction.result,
+    extraction.originalStepTexts,
+    options.provider,
+    threshold,
+  );
+
+  return {
+    result: { ...extraction.result, steps: gatedSteps },
+    method: "llm_text",
+    finalUrl: fetched.finalUrl,
+  };
+}
+
+/** 手順要約に類似度ゲートを適用する。再生成はプロバイダの extract を単発利用。 */
+function gateSteps(
+  result: RecipeExtractionResult,
+  originalStepTexts: Record<number, string>,
+  provider: ExtractionProvider,
+  threshold: number,
+) {
+  return applySimilarityGate(
+    result.steps,
+    originalStepTexts,
+    async (position, original, previous) => {
+      // 再生成: 該当手順の原文のみを渡して、より離れた要約を得る。
+      const re = await provider.extract({
+        url: "",
+        text: original,
+        titleHint: previous,
+      });
+      return re.result.steps[0]?.summary ?? previous;
+    },
+    { threshold },
+  );
+}

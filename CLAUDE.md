@@ -99,7 +99,16 @@ pnpm --filter @recipe-planner/web typecheck
 - `src/generation/` — 献立生成。`generateMealPlan()` が入口。`rng.ts`(seeded RNG + softmax) / `scoring.ts`(F-02-2 の重み付け) / `generate.ts`(候補構築→フィルタ→サンプリング→多様性再抽選→制約緩和)。**乱数は注入可能**（テストは `mulberry32` で決定論化）
 - `src/shopping/` — 買い物リスト集約。`aggregateShoppingList()` が入口。`units.ts`(単位分類・換算 §5.3) / `aggregate.ts`(展開→スケール→グルーピング→合算→常備品除外→売場順ソート)
 - `src/normalize/` — 食材名の正規化。`normalizeIngredientName()`(NFKC→ひらがな化→空白除去→小文字化)。手動入力と抽出パイプラインが共有する照合キー生成
+- `src/similarity/` — 文字 3-gram 類似度（§3.4）。`overlapRatio`/`checkSimilarity`、閾値 `SIMILARITY_THRESHOLDS`(私的0.6/公開0.4)。要約が原文表現をなぞっていないかの機械検査
+- `src/extraction/` — レシピ抽出の**共有型・純粋ロジック**（Deno の Edge Function から利用）。`types.ts`(`ExtractionProvider` 抽象/結果型) / `jsonld.ts`(schema.org/Recipe 直接マッピング=Tier0・LLM不要) / `gate.ts`(`applySimilarityGate`: 超過なら再生成最大2回→破棄) / `html.ts`(JSON-LD ブロック抽出・本文テキスト化、DOM非依存) / `url.ts`(`validateExternalUrl`: SSRF 判定) / `prompt.ts`(抽出プロンプト・出力スキーマ)
 - `src/testing.ts` — テスト専用ファクトリ（`index.ts` からは公開しない）
+- 注意: core の tsconfig は `lib: ["ES2022","WebWorker"]`。`URL`/`fetch` 等の Web 標準グローバルの型のみ入れ、`document`/`window` は含めない（DOM フリー規律を維持）
+
+### supabase/functions（Deno・抽出パイプライン）
+- `_shared/fetch.ts`(SSRF再検証付き安全fetch: リダイレクト手動追跡・タイムアウト・サイズ上限) / `_shared/pipeline.ts`(取得→JSON-LD高速経路 or LLM抽出→類似度ゲート→原文破棄) / `_shared/providers/`(`gemini.ts` 実装・`mock.ts` キー無しローカル検証用) / `_shared/provider-select.ts`(`GEMINI_API_KEY` があれば Gemini、無ければ Mock) / `ingest/index.ts`(POST /ingest: 即202 + `EdgeRuntime.waitUntil()`)
+- core は `deno.json` の import map で `@recipe-planner/core/extraction` 等を相対 `.ts` にエイリアス
+- **未接続**: Supabase プロジェクト・DB(import_jobs/recipes 挿入)・ingest トークン照合・レート制限・Realtime 通知は `ingest/index.ts` に TODO として明示。Gemini キー投入で実プロバイダに切替
+- **deno 未インストールのため Deno 側は型チェック未実施**。純粋ロジック(SSRF/JSON-LD/ゲート/HTML)は core に置き vitest でカバー済み
 
 ## 実装の優先順位
 
