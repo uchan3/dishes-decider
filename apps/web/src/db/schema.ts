@@ -129,6 +129,12 @@ export interface OutboxRow {
   created_at: string;
 }
 
+/** アプリ設定の汎用キー・バリュー行（曜日別テンプレ・世帯人数など）。 */
+export interface SettingRow {
+  key: string;
+  value: unknown;
+}
+
 /** アプリの Dexie データベース。 */
 export class AppDatabase extends Dexie {
   sources!: EntityTable<SourceRow, "id">;
@@ -138,6 +144,7 @@ export class AppDatabase extends Dexie {
   mealPlans!: EntityTable<MealPlanRow, "id">;
   shoppingItems!: EntityTable<ShoppingItemRow, "id">;
   outbox!: EntityTable<OutboxRow, "seq">;
+  settings!: EntityTable<SettingRow, "key">;
 
   constructor() {
     super("recipe-planner");
@@ -149,6 +156,10 @@ export class AppDatabase extends Dexie {
       mealPlans: "id, start_date",
       shoppingItems: "id, shopping_list_id, meal_plan_id, category",
       outbox: "++seq, table_name, record_id, created_at",
+    });
+    // v2: アプリ設定用のキー・バリューストアを追加。
+    this.version(2).stores({
+      settings: "key",
     });
   }
 }

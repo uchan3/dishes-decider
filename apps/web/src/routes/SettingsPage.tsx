@@ -2,6 +2,13 @@ import { useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../db/schema.ts";
 import { seedSampleData } from "../db/seed.ts";
+import {
+  TEMPLATES,
+  WEEKDAY_LABELS,
+  type TemplateId,
+  type WeekdayTemplates,
+} from "../lib/mealTemplates.ts";
+import { loadWeekdayTemplates, saveWeekdayTemplates } from "../lib/settings.ts";
 
 const KIND_LABEL: Record<string, string> = {
   youtube: "YouTube",
@@ -24,8 +31,17 @@ export function SettingsPage() {
     return map;
   }, []);
 
+  const weekdayTemplates = useLiveQuery(() => loadWeekdayTemplates(), []);
+
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+
+  function setWeekdayTemplate(index: number, templateId: TemplateId) {
+    if (!weekdayTemplates) return;
+    const next = [...weekdayTemplates] as WeekdayTemplates;
+    next[index] = templateId;
+    void saveWeekdayTemplates(next);
+  }
 
   async function handleSeed() {
     setBusy(true);
@@ -61,6 +77,32 @@ export function SettingsPage() {
   return (
     <section>
       <h1>設定</h1>
+
+      <div className="card">
+        <h2>曜日ごとの献立構成</h2>
+        <p className="muted">各曜日にどの構成で献立を作るか選べます。次回の生成から反映されます。</p>
+        {!weekdayTemplates ? (
+          <p className="muted">読み込み中…</p>
+        ) : (
+          <ul className="weekday-list">
+            {WEEKDAY_LABELS.map((label, i) => (
+              <li key={label} className="weekday-item">
+                <span className="weekday-item__label">{label}</span>
+                <select
+                  value={weekdayTemplates[i]}
+                  onChange={(e) => setWeekdayTemplate(i, e.target.value as TemplateId)}
+                >
+                  {TEMPLATES.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
       <div className="card">
         <h2>ソース</h2>

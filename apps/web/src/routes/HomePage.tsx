@@ -7,7 +7,6 @@ import {
   generateWeek,
   reshuffleMeal,
   reshuffleSlot,
-  reshuffleWeek,
   toggleSlotLock,
 } from "../lib/planning.ts";
 
@@ -56,15 +55,10 @@ export function HomePage() {
   }
 
   function handleWeek() {
+    // 週の作り直しは常に現在の曜日テンプレで構造から生成する（ロックは generateWeek が維持）。
     void run(async () => {
-      const result = plan
-        ? await reshuffleWeek(plan)
-        : { ...(await generateWeek(weekStart)), noAlternativeCount: 0 };
-      return {
-        relaxations: result.relaxations,
-        unfilled: result.unfilledCount,
-        noAlternative: result.noAlternativeCount,
-      };
+      const result = await generateWeek(weekStart);
+      return { relaxations: result.relaxations, unfilled: result.unfilledCount, noAlternative: 0 };
     });
   }
 
@@ -140,15 +134,20 @@ export function HomePage() {
                 <div className="day-card__date">
                   <span className="day-card__dow">{weekdayLabel(meal.date)}</span>
                   <span className="day-card__num">{meal.date.slice(5)}</span>
-                  <button
-                    className="icon-btn"
-                    title="この日を作り直す"
-                    disabled={busy}
-                    onClick={() => handleMeal(meal.id)}
-                  >
-                    ↻
-                  </button>
+                  {!meal.is_skipped && meal.slots.length > 0 && (
+                    <button
+                      className="icon-btn"
+                      title="この日を作り直す"
+                      disabled={busy}
+                      onClick={() => handleMeal(meal.id)}
+                    >
+                      ↻
+                    </button>
+                  )}
                 </div>
+                {meal.is_skipped ? (
+                  <p className="slot-list slot--skipped muted">外食・作らない</p>
+                ) : (
                 <ul className="slot-list">
                   {meal.slots.map((slot) => (
                     <li key={slot.id} className={slot.is_locked ? "slot slot--locked" : "slot"}>
@@ -183,6 +182,7 @@ export function HomePage() {
                     </li>
                   ))}
                 </ul>
+                )}
               </article>
             ))}
           </div>

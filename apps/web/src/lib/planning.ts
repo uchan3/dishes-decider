@@ -8,7 +8,6 @@
 import {
   aggregateShoppingList,
   generateMealPlan,
-  type DishRole,
   type Recipe,
   type RecipeForShopping,
   type ShoppingItem,
@@ -17,6 +16,8 @@ import {
 import { db, type MealPlanRow, type MealRow, type PlanSlotRow } from "../db/schema.ts";
 import { toIngredient, toRecipe, toRecipeIngredient } from "../db/mappers.ts";
 import { addDays, isWeekend, today } from "./date.ts";
+import { mondayIndex, templateById, type TemplateId, type WeekdayTemplates } from "./mealTemplates.ts";
+import { loadWeekdayTemplates } from "./settings.ts";
 
 /**
  * 献立生成の対象レシピを読み込む。無効化されたソース（`is_enabled=false`）に属する
@@ -33,28 +34,31 @@ async function loadEligibleRecipes(): Promise<Recipe[]> {
     .map(toRecipe);
 }
 
-/** 曜日ごとのスロット構成（平日=標準 / 土日=がっつり）。 */
-function templateFor(date: string): DishRole[] {
-  return isWeekend(date) ? ["main", "side", "side"] : ["main", "side"];
+/** 1 日分の構成（テンプレ適用後）。 */
+interface DayPlan {
+  date: string;
+  templateId: TemplateId;
+  slots: SlotRequest[];
 }
 
-/** 週の 7 日分のスロット要求を組み立てる。slotId は `date#role#index`。 */
-function buildWeekSlots(startDate: string): {
-  slots: SlotRequest[];
-  slotDate: Map<string, string>;
-} {
-  const slots: SlotRequest[] = [];
-  const slotDate = new Map<string, string>();
+/**
+ * 週の 7 日分を曜日別テンプレに従って組み立てる。slotId は `date#role#index`。
+ * `eat_out`（空スロット）の日も DayPlan として返す（slots は空）。
+ */
+function buildWeekPlan(startDate: string, weekday: WeekdayTemplates): DayPlan[] {
+  const days: DayPlan[] = [];
   for (let i = 0; i < 7; i++) {
     const date = addDays(startDate, i);
-    const roles = templateFor(date);
-    roles.forEach((role, idx) => {
-      const slotId = `${date}#${role}#${idx}`;
-      slots.push({ slotId, dishRole: role, isWeekend: isWeekend(date) });
-      slotDate.set(slotId, date);
-    });
+    const templateId = weekday[mondayIndex(date)] as TemplateId;
+    const template = templateById(templateId);
+    const slots: SlotRequest[] = template.slots.map((role, idx) => ({
+      slotId: `${date}#${role}#${idx}`,
+      dishRole: role,
+      isWeekend: isWeekend(date),
+    }));
+    days.push({ date, templateId, slots });
   }
-  return { slots, slotDate };
+  return days;
 }
 
 /** 生成結果。 */
@@ -73,11 +77,30 @@ export interface GeneratedWeek {
  * @returns 生成された献立と緩和情報
  */
 export async function generateWeek(startDate: string): Promise<GeneratedWeek> {
-  const recipes = await loadEligibleRecipes();
-  const { slots, slotDate } = buildWeekSlots(startDate);
+  const [recipes, weekday, existing] = await Promise.all([
+    loadEligibleRecipes(),
+    loadWeekdayTemplates(),
+    db.mealPlans.get(`plan-${startDate}`),
+  ]);
+  const days = buildWeekPlan(startDate, weekday);
+
+  // 既存プランのロック済みスロット（slotId → recipeId）を引き継ぐ。
+  // slotId は `date#role#index` なので、同じ構成が残るスロットのロックだけが維持される。
+  const lockedRecipeBySlot = new Map<string, string | null>();
+  for (const meal of existing?.meals ?? []) {
+    for (const slot of meal.slots) {
+      if (slot.is_locked) lockedRecipeBySlot.set(slot.id, slot.recipe_id);
+    }
+  }
 
   const result = generateMealPlan({
-    slots,
+    slots: days.flatMap((d) =>
+      d.slots.map((s) =>
+        lockedRecipeBySlot.has(s.slotId)
+          ? { ...s, lockedRecipeId: lockedRecipeBySlot.get(s.slotId) ?? null }
+          : s,
+      ),
+    ),
     recipes,
     referenceDate: today(),
     rng: Math.random, // UI では再生成のたびに変化させる
@@ -85,39 +108,28 @@ export async function generateWeek(startDate: string): Promise<GeneratedWeek> {
 
   const bySlot = new Map(result.assignments.map((a) => [a.slotId, a] as const));
 
-  // 日付ごとに Meal を組み立てる。
-  const mealsByDate = new Map<string, MealRow>();
-  for (const slot of slots) {
-    const date = slotDate.get(slot.slotId) as string;
-    let meal = mealsByDate.get(date);
-    if (!meal) {
-      meal = {
-        id: `meal-${date}`,
-        date,
-        meal_type: "dinner",
-        template_id: null,
-        is_skipped: false,
-        slots: [],
-      };
-      mealsByDate.set(date, meal);
-    }
-    const assignment = bySlot.get(slot.slotId);
-    const planSlot: PlanSlotRow = {
+  // 曜日ごとに Meal を組み立てる（外食・作らない日は is_skipped、slots 空）。
+  const meals: MealRow[] = days.map((day) => ({
+    id: `meal-${day.date}`,
+    date: day.date,
+    meal_type: "dinner",
+    template_id: day.templateId,
+    is_skipped: day.templateId === "eat_out",
+    slots: day.slots.map((slot, idx) => ({
       id: slot.slotId,
       dish_role: slot.dishRole,
-      recipe_id: assignment?.recipeId ?? null,
-      is_locked: false,
-      position: meal.slots.length,
-    };
-    meal.slots.push(planSlot);
-  }
+      recipe_id: bySlot.get(slot.slotId)?.recipeId ?? null,
+      is_locked: lockedRecipeBySlot.has(slot.slotId),
+      position: idx,
+    })),
+  }));
 
   const nowIso = new Date().toISOString();
   const plan: MealPlanRow = {
     id: `plan-${startDate}`,
     start_date: startDate,
     status: "draft",
-    meals: [...mealsByDate.values()].sort((a, b) => a.date.localeCompare(b.date)),
+    meals,
     created_at: nowIso,
     updated_at: nowIso,
   };
@@ -230,12 +242,6 @@ export function reshuffleSlot(plan: MealPlanRow, slotId: string): Promise<Reshuf
 export function reshuffleMeal(plan: MealPlanRow, mealId: string): Promise<ReshuffleResult> {
   const meal = plan.meals.find((m) => m.id === mealId);
   const slotIds = meal ? meal.slots.map((s) => s.id) : [];
-  return reshuffleSlots(plan, slotIds, false);
-}
-
-/** 週全体の未ロックスロットを再抽選する（F-02-3 週単位。ロックは維持）。 */
-export function reshuffleWeek(plan: MealPlanRow): Promise<ReshuffleResult> {
-  const slotIds = flattenSlots(plan).map(({ slot }) => slot.id);
   return reshuffleSlots(plan, slotIds, false);
 }
 
