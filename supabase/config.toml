@@ -364,6 +364,11 @@ deno_version = 2
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
+# ingest は独自の ingest トークン（Supabase JWT ではない）で認証するため、
+# ゲートウェイの JWT 検証を無効化する。認証は関数内のトークン照合＋レート制限で担保。
+[functions.ingest]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327
