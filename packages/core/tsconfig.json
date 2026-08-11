@@ -1,7 +1,10 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": "src"
+    "rootDir": "src",
+    // URL / fetch など Web 標準グローバルの型のみ入れる（document/window は含めず、
+    // core の DOM フリー規律を保つ）。Deno・ブラウザ双方に存在する API。
+    "lib": ["ES2022", "WebWorker"]
   },
   "include": ["src"]
 }
