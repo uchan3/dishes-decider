@@ -91,11 +91,18 @@ export async function extractFromContent(
   // Tier 1/2: 本文を LLM に投げる（HTML はテキスト化してトークン削減）。
   const text = kind === "html" ? htmlToText(content) : content;
   const extraction = await options.provider.extract({ url, text, titleHint: null });
+
+  // LLM 経路は per-step の原文が無いため、各要約を「入力本文全体」と突合する。
+  // 再生成は追加の LLM 呼び出しになり無料枠を圧迫するため行わず、超過した要約は
+  // 破棄して原典参照に置き換える（maxRetries=0）。手順は原典リンク/埋め込みが主。
+  const sourceOriginals: Record<number, string> = {};
+  for (const step of extraction.result.steps) sourceOriginals[step.position] = text;
   const gatedSteps = await gateSteps(
     extraction.result,
-    extraction.originalStepTexts,
+    sourceOriginals,
     options.provider,
     threshold,
+    0,
   );
 
   return {
@@ -105,25 +112,27 @@ export async function extractFromContent(
   };
 }
 
-/** 手順要約に類似度ゲートを適用する。再生成はプロバイダの extract を単発利用。 */
+/**
+ * 手順要約に類似度ゲートを適用する。
+ *
+ * @param maxRetries - 超過時の再生成回数。0 なら再生成せず破棄（無料枠節約・LLM 経路）。
+ *   JSON-LD 経路は summary が null のためゲート自体がスキップされ LLM 呼び出しは発生しない。
+ */
 function gateSteps(
   result: RecipeExtractionResult,
   originalStepTexts: Record<number, string>,
   provider: ExtractionProvider,
   threshold: number,
+  maxRetries = 2,
 ) {
   return applySimilarityGate(
     result.steps,
     originalStepTexts,
-    async (position, original, previous) => {
-      // 再生成: 該当手順の原文のみを渡して、より離れた要約を得る。
-      const re = await provider.extract({
-        url: "",
-        text: original,
-        titleHint: previous,
-      });
+    async (_position, original, previous) => {
+      // 再生成が要る場合のみ呼ばれる（maxRetries>0）。該当原文を渡して離れた要約を得る。
+      const re = await provider.extract({ url: "", text: original, titleHint: previous });
       return re.result.steps[0]?.summary ?? previous;
     },
-    { threshold },
+    { threshold, maxRetries },
   );
 }

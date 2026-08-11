@@ -57,11 +57,10 @@ function toResult(raw: Record<string, unknown>): {
     const obj = s as Record<string, unknown>;
     const position = typeof obj["position"] === "number" ? obj["position"] : i + 1;
     const summary = typeof obj["summary"] === "string" ? obj["summary"] : null;
-    // Gemini には手順の要約を返させるが、原文は本文にしか無い。
-    // ここでは要約自身を原文プレースホルダとして扱わず、呼び出し側で本文と突合する。
-    if (summary) originalStepTexts[position] = summary;
     return { position, summary };
   });
+  // 原文（per-step）は LLM 経路には存在しない。ゲートは呼び出し側で入力本文全体と
+  // 突合するため、ここでは originalStepTexts を空のままにする（要約を原文に使わない）。
 
   return {
     result: {
