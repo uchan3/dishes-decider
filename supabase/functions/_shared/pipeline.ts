@@ -11,13 +11,17 @@ import {
   applySimilarityGate,
   extractJsonLdBlocks,
   extractRecipeFromJsonLd,
+  extractYouTubeContent,
   htmlToText,
+  isYouTubeUrl,
+  youtubeVideoId,
   SIMILARITY_THRESHOLDS,
   type ExtractionMethod,
   type ExtractionProvider,
   type RecipeExtractionResult,
 } from "@recipe-planner/core/extraction";
 import { safeFetch } from "./fetch.ts";
+import { fetchYouTubeSnippet } from "./youtube-api.ts";
 
 /** パイプラインの結果（DB に保存できる構造化データのみ）。 */
 export interface PipelineResult {
@@ -48,8 +52,37 @@ export async function runExtraction(
   url: string,
   options: PipelineOptions,
 ): Promise<PipelineResult> {
+  // YouTube は Data API で概要欄を直接取得（HTML スクレイプ不要・確実）。
+  const yt = await maybeExtractYouTube(url, options);
+  if (yt) return yt;
+
   const fetched = await safeFetch(url);
   return extractFromContent(fetched.finalUrl, fetched.body, "html", options);
+}
+
+/**
+ * YouTube URL なら Data API で snippet を取得して LLM 抽出する。
+ * `YOUTUBE_API_KEY` 未設定・非 YouTube・ID 不明・snippet 無しなら null（呼び出し側は
+ * 従来の HTML/content 経路にフォールバック）。
+ */
+async function maybeExtractYouTube(
+  url: string,
+  options: PipelineOptions,
+): Promise<PipelineResult | null> {
+  if (!isYouTubeUrl(url)) return null;
+  const apiKey = Deno.env.get("YOUTUBE_API_KEY");
+  if (!apiKey) return null;
+  const videoId = youtubeVideoId(url);
+  if (!videoId) return null;
+
+  const snippet = await fetchYouTubeSnippet(videoId, apiKey);
+  if (!snippet || snippet.description.trim() === "") {
+    console.log(`[pipeline] youtube-api: videoId=${videoId} description empty`);
+    return null;
+  }
+  console.log(`[pipeline] youtube-api: videoId=${videoId} descLen=${snippet.description.length}`);
+  const text = `タイトル: ${snippet.title}\n\n${snippet.description}`;
+  return llmExtract(url, text, snippet.title, options);
 }
 
 /**
@@ -68,6 +101,15 @@ export async function extractFromContent(
   kind: ContentKind,
   options: PipelineOptions,
 ): Promise<PipelineResult> {
+  console.log(
+    `[pipeline] extractFromContent kind=${kind} contentLen=${content.length} ` +
+      `youtube=${isYouTubeUrl(url)} url=${url}`,
+  );
+
+  // YouTube は Data API 経路を優先（HTML content は可視テキスト化で概要欄が失われるため）。
+  const yt = await maybeExtractYouTube(url, options);
+  if (yt) return yt;
+
   const threshold = options.threshold ?? SIMILARITY_THRESHOLDS.private;
 
   // Tier 0: HTML なら JSON-LD 直接マッピングを試す。
@@ -88,13 +130,35 @@ export async function extractFromContent(
     }
   }
 
-  // Tier 1/2: 本文を LLM に投げる（HTML はテキスト化してトークン削減）。
-  const text = kind === "html" ? htmlToText(content) : content;
-  const extraction = await options.provider.extract({ url, text, titleHint: null });
+  // Tier 1/2: 本文を LLM に投げる。
+  // YouTube キー未設定時のフォールバック: watch HTML の概要欄を抜く（不確実）。
+  let text: string;
+  let titleHint: string | null = null;
+  if (kind === "html" && isYouTubeUrl(url)) {
+    const parsed = extractYouTubeContent(content);
+    titleHint = parsed.title;
+    const body = parsed.description ?? htmlToText(content);
+    text = parsed.title ? `タイトル: ${parsed.title}\n\n${body}` : body;
+  } else {
+    text = kind === "html" ? htmlToText(content) : content;
+  }
+  return llmExtract(url, text, titleHint, options);
+}
 
-  // LLM 経路は per-step の原文が無いため、各要約を「入力本文全体」と突合する。
-  // 再生成は追加の LLM 呼び出しになり無料枠を圧迫するため行わず、超過した要約は
-  // 破棄して原典参照に置き換える（maxRetries=0）。手順は原典リンク/埋め込みが主。
+/**
+ * 本文テキストを LLM に投げて構造化し、類似度ゲートを適用する（LLM 経路の共通処理）。
+ *
+ * per-step の原文は無いため、各要約は「入力本文全体」と突合する。再生成は無料枠を
+ * 圧迫するため行わず（maxRetries=0）、超過した要約は破棄して原典参照に置き換える。
+ */
+async function llmExtract(
+  url: string,
+  text: string,
+  titleHint: string | null,
+  options: PipelineOptions,
+): Promise<PipelineResult> {
+  const threshold = options.threshold ?? SIMILARITY_THRESHOLDS.private;
+  const extraction = await options.provider.extract({ url, text, titleHint });
   const sourceOriginals: Record<number, string> = {};
   for (const step of extraction.result.steps) sourceOriginals[step.position] = text;
   const gatedSteps = await gateSteps(
@@ -104,7 +168,6 @@ export async function extractFromContent(
     threshold,
     0,
   );
-
   return {
     result: { ...extraction.result, steps: gatedSteps },
     method: "llm_text",

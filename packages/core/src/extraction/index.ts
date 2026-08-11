@@ -17,6 +17,14 @@ export {
 export { applySimilarityGate, type RegenerateStep, type GateOptions } from "./gate.ts";
 export { extractJsonLdBlocks, htmlToText } from "./html.ts";
 export {
+  isYouTubeUrl,
+  youtubeVideoId,
+  extractYouTubeDescription,
+  extractYouTubeTitle,
+  extractYouTubeContent,
+  type YouTubeContent,
+} from "./youtube.ts";
+export {
   validateExternalUrl,
   isInternalHost,
   isPrivateIpv4,
