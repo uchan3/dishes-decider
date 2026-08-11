@@ -22,7 +22,26 @@ const ENDPOINT = (model: string, key: string) =>
 
 /** Gemini のレスポンス JSON（必要部分のみ）。 */
 interface GeminiResponse {
-  candidates?: { content?: { parts?: { text?: string }[] } }[];
+  candidates?: {
+    content?: { parts?: { text?: string; thought?: boolean }[] };
+    finishReason?: string;
+  }[];
+}
+
+/**
+ * 応答から JSON テキストを取り出す。3.x の思考モデルは parts に思考パートを混ぜ、
+ * 稀に ```json フェンスで囲むため、思考を除外して結合し、フェンスを剥がす。
+ */
+function extractJsonText(data: GeminiResponse): string {
+  const parts = data.candidates?.[0]?.content?.parts ?? [];
+  const text = parts
+    .filter((p) => p.thought !== true && typeof p.text === "string")
+    .map((p) => p.text as string)
+    .join("")
+    .trim();
+  // ```json ... ``` / ``` ... ``` を剥がす。
+  const fenced = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return (fenced ? (fenced[1] as string) : text).trim();
 }
 
 /** snake_case の抽出 JSON をドメイン結果 (camelCase) に変換する。 */
@@ -94,12 +113,19 @@ export class GeminiProvider implements ExtractionProvider {
       throw new Error(`Gemini API エラー: HTTP ${res.status} ${await res.text()}`);
     }
     const data = (await res.json()) as GeminiResponse;
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) throw new Error("Gemini から空の応答");
+    const finishReason = data.candidates?.[0]?.finishReason;
+    const text = extractJsonText(data);
+    if (!text) {
+      throw new Error(`Gemini から空の応答（finishReason=${finishReason ?? "?"}）`);
+    }
     let parsed: Record<string, unknown>;
     try {
       parsed = JSON.parse(text);
     } catch {
+      // 生応答の先頭を残して原因を追えるようにする（材料抽出の精度検証のため）。
+      console.log(
+        `[gemini] JSON parse 失敗 finishReason=${finishReason ?? "?"} head=${text.slice(0, 300)}`,
+      );
       throw new Error("Gemini の応答が JSON として解釈できません");
     }
     return toResult(parsed);
