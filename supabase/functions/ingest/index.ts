@@ -15,11 +15,17 @@ import { selectProvider } from "../_shared/provider-select.ts";
 import {
   createImportJob,
   failJob,
+  hashToken,
   persistExtraction,
   resolveIngestToken,
   serviceClient,
   withinRateLimit,
 } from "../_shared/db.ts";
+
+/** 受信トークンのハッシュ先頭8文字（照合ずれのデバッグ用。全体は出さない）。 */
+async function debugHashPrefix(token: string): Promise<string> {
+  return (await hashToken(token)).slice(0, 8);
+}
 
 interface EdgeRuntimeLike {
   waitUntil(promise: Promise<unknown>): void;
@@ -37,8 +43,16 @@ const json = (body: unknown, status: number): Response =>
     headers: { "content-type": "application/json" },
   });
 
-/** Authorization ヘッダから Bearer トークンを取り出す。 */
-function bearerToken(req: Request): string | null {
+/**
+ * ingest トークンを取り出す。独自ヘッダ `x-ingest-token` を優先し、
+ * 無ければ `Authorization: Bearer` にフォールバックする。
+ *
+ * Supabase ゲートウェイは `Authorization` を自前の用途で差し替えることがあるため、
+ * 独自ヘッダを主経路にする（iOS ショートカットも独自ヘッダを送れる）。
+ */
+function ingestToken(req: Request): string | null {
+  const custom = req.headers.get("x-ingest-token");
+  if (custom && custom.trim()) return custom.trim();
   const auth = req.headers.get("authorization") ?? "";
   const m = auth.match(/^Bearer\s+(.+)$/i);
   return m ? (m[1] as string).trim() : null;
@@ -47,7 +61,7 @@ function bearerToken(req: Request): string | null {
 Deno.serve(async (req: Request) => {
   if (req.method !== "POST") return json({ error: "POST のみ許可" }, 405);
 
-  const token = bearerToken(req);
+  const token = ingestToken(req);
   if (!token) return json({ error: "ingest トークンが必要です" }, 401);
 
   let payload: { url?: string };
@@ -65,7 +79,12 @@ Deno.serve(async (req: Request) => {
   const db = serviceClient();
 
   const userId = await resolveIngestToken(db, token);
-  if (!userId) return json({ error: "無効な ingest トークンです" }, 401);
+  if (!userId) {
+    // デバッグ: 受信トークンのハッシュ先頭のみログ（照合ずれの切り分け用。全体は出さない）。
+    const dbg = await debugHashPrefix(token);
+    console.log(`[ingest] token mismatch: len=${token.length} hashPrefix=${dbg}`);
+    return json({ error: "無効な ingest トークンです" }, 401);
+  }
 
   if (!(await withinRateLimit(db, userId))) {
     return json({ error: "レート上限に達しました（1時間あたり60件）" }, 429);
