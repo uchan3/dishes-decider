@@ -1,16 +1,20 @@
 /**
  * POST /ingest — レシピ取り込みエンドポイント（architecture §3）。
  *
- * iOS ショートカット / PWA から `Authorization: Bearer <ingest-token>` と `{ url }` を
+ * iOS ショートカット / PWA から `x-ingest-token` と `{ url }`（任意で `content`）を
  * 受け取り、即 202 を返してから `EdgeRuntime.waitUntil()` で抽出を継続する。
  *
+ * 2 経路:
+ *   - `{ url }` のみ → サーバー側で fetch して抽出（通常サイト）
+ *   - `{ url, content, contentKind }` → 端末で取得済みの本文から抽出（サーバー fetch を
+ *     行わない）。Cloudflare 等の Bot 対策サイトや YouTube 概要欄はこちらを使う。
+ *
  * フロー: トークン照合 → レート制限 → import_jobs(pending) → 202 →
- *   （背景）取得→JSON-LD/LLM抽出→類似度ゲート→recipes 挿入→job 更新。
- *   結果は import_jobs の Realtime 変更で PWA に届く。
+ *   （背景）抽出→類似度ゲート→recipes 挿入→job 更新。結果は Realtime で PWA に届く。
  */
 
 import { validateExternalUrl } from "@recipe-planner/core/extraction";
-import { runExtraction } from "../_shared/pipeline.ts";
+import { extractFromContent, runExtraction, type ContentKind } from "../_shared/pipeline.ts";
 import { selectProvider } from "../_shared/provider-select.ts";
 import {
   createImportJob,
@@ -64,7 +68,7 @@ Deno.serve(async (req: Request) => {
   const token = ingestToken(req);
   if (!token) return json({ error: "ingest トークンが必要です" }, 401);
 
-  let payload: { url?: string };
+  let payload: { url?: string; content?: string; contentKind?: string };
   try {
     payload = await req.json();
   } catch {
@@ -72,6 +76,11 @@ Deno.serve(async (req: Request) => {
   }
   const url = payload.url?.trim();
   if (!url) return json({ error: "url は必須です" }, 400);
+
+  // content が渡された場合は端末側で取得済み（Bot 対策サイト・YouTube 概要欄など）。
+  // サーバー fetch を行わないので SSRF の懸念はないが、URL は保存・表示に使うため常に検証する。
+  const content = typeof payload.content === "string" ? payload.content : null;
+  const contentKind: ContentKind = payload.contentKind === "text" ? "text" : "html";
 
   const check = validateExternalUrl(url);
   if (!check.ok) return json({ error: check.reason }, 400);
@@ -97,7 +106,10 @@ Deno.serve(async (req: Request) => {
     (async () => {
       try {
         const provider = selectProvider();
-        const { result, method, finalUrl } = await runExtraction(url, { provider });
+        // content があれば端末取得の本文から抽出（fetch しない）、無ければサーバー fetch。
+        const { result, method, finalUrl } = content
+          ? await extractFromContent(url, content, contentKind, { provider })
+          : await runExtraction(url, { provider });
         await persistExtraction(db, userId, jobId, finalUrl, method, result);
       } catch (err) {
         await failJob(db, jobId, err instanceof Error ? err.message : String(err));

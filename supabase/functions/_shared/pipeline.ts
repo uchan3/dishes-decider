@@ -34,42 +34,63 @@ export interface PipelineOptions {
   threshold?: number;
 }
 
+/** 事前取得コンテンツの種別。 */
+export type ContentKind = "html" | "text";
+
 /**
- * URL からレシピを抽出する。
+ * URL からレシピを抽出する（サーバー側 fetch 経路）。
  *
  * JSON-LD が取れれば LLM をスキップ（コスト 0）。取れなければ本文を LLM に投げる。
- * いずれの経路でも手順要約は類似度ゲートを通す。
+ * Bot 対策サイト（Cloudflare・YouTube 等）はデータセンター IP から弾かれるため、
+ * その場合は {@link extractFromContent}（端末側で取得した本文を渡す経路）を使う。
  */
 export async function runExtraction(
   url: string,
   options: PipelineOptions,
 ): Promise<PipelineResult> {
-  const threshold = options.threshold ?? SIMILARITY_THRESHOLDS.private;
   const fetched = await safeFetch(url);
+  return extractFromContent(fetched.finalUrl, fetched.body, "html", options);
+}
 
-  // Tier 0: JSON-LD 直接マッピング。
-  const jsonLd = extractRecipeFromJsonLd(extractJsonLdBlocks(fetched.body));
-  if (jsonLd && jsonLd.result.ingredients.length > 0) {
-    const gatedSteps = await gateSteps(
-      jsonLd.result,
-      jsonLd.originalStepTexts,
-      options.provider,
-      threshold,
-    );
-    return {
-      result: { ...jsonLd.result, steps: gatedSteps },
-      method: "jsonld",
-      finalUrl: fetched.finalUrl,
-    };
+/**
+ * 事前取得済みのコンテンツからレシピを抽出する（サーバー fetch を行わない経路）。
+ *
+ * iOS ショートカット / PWA が端末側でページ本文（HTML）や動画概要欄（テキスト）を
+ * 取得して渡す。これにより Bot 対策サイトでもユーザー端末からのアクセス扱いになる。
+ *
+ * @param url - 原典 URL（保存・表示用。この関数は fetch しない）
+ * @param content - 取得済みの本文（HTML または プレーンテキスト）
+ * @param kind - `html` なら JSON-LD 高速経路を試す。`text` は LLM 抽出のみ
+ */
+export async function extractFromContent(
+  url: string,
+  content: string,
+  kind: ContentKind,
+  options: PipelineOptions,
+): Promise<PipelineResult> {
+  const threshold = options.threshold ?? SIMILARITY_THRESHOLDS.private;
+
+  // Tier 0: HTML なら JSON-LD 直接マッピングを試す。
+  if (kind === "html") {
+    const jsonLd = extractRecipeFromJsonLd(extractJsonLdBlocks(content));
+    if (jsonLd && jsonLd.result.ingredients.length > 0) {
+      const gatedSteps = await gateSteps(
+        jsonLd.result,
+        jsonLd.originalStepTexts,
+        options.provider,
+        threshold,
+      );
+      return {
+        result: { ...jsonLd.result, steps: gatedSteps },
+        method: "jsonld",
+        finalUrl: url,
+      };
+    }
   }
 
-  // Tier 1/2: 本文を LLM に投げる。
-  const text = htmlToText(fetched.body);
-  const extraction = await options.provider.extract({
-    url: fetched.finalUrl,
-    text,
-    titleHint: null,
-  });
+  // Tier 1/2: 本文を LLM に投げる（HTML はテキスト化してトークン削減）。
+  const text = kind === "html" ? htmlToText(content) : content;
+  const extraction = await options.provider.extract({ url, text, titleHint: null });
   const gatedSteps = await gateSteps(
     extraction.result,
     extraction.originalStepTexts,
@@ -80,7 +101,7 @@ export async function runExtraction(
   return {
     result: { ...extraction.result, steps: gatedSteps },
     method: "llm_text",
-    finalUrl: fetched.finalUrl,
+    finalUrl: url,
   };
 }
 
