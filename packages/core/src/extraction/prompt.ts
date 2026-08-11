@@ -1,12 +1,14 @@
 /**
  * 抽出プロンプトと出力スキーマ（仕様書 F-01-1「抽出プロンプトの仕様」）。
  *
- * Gemini の `responseSchema` と Claude のツール入力の双方で使えるよう、
- * JSON スキーマ相当を定数で持つ。プロンプト本文は「手順は事実のみに正規化し、
- * 語り口・形容詞・比喩を排除する」制約を明文化する（§3.4 原則2）。
+ * スキーマは **Gemini `responseSchema`（OpenAPI 3.0 サブセット）互換**で書く。
+ * 標準 JSON Schema と違い、`type` にユニオン配列（例 `["number","null"]`）は使えず、
+ * null 許容は `nullable: true`、enum は単一 `type` と併記する。Claude のツール入力
+ * （JSON Schema）はこの形も受理する（未知キーワードは無視される）。
+ * プロンプト本文は「手順は事実のみに正規化」制約を明文化する（§3.4 原則2）。
  */
 
-/** 抽出の出力 JSON スキーマ（プロバイダ非依存）。 */
+/** 抽出の出力スキーマ（Gemini responseSchema 互換）。 */
 export const EXTRACTION_JSON_SCHEMA = {
   type: "object",
   properties: {
@@ -18,8 +20,8 @@ export const EXTRACTION_JSON_SCHEMA = {
         properties: {
           raw_text: { type: "string" },
           display_name: { type: "string" },
-          quantity: { type: ["number", "null"] },
-          unit: { type: ["string", "null"] },
+          quantity: { type: "number", nullable: true },
+          unit: { type: "string", nullable: true },
         },
         required: ["raw_text", "display_name"],
       },
@@ -29,20 +31,22 @@ export const EXTRACTION_JSON_SCHEMA = {
       items: {
         type: "object",
         properties: {
-          position: { type: "number" },
+          position: { type: "integer" },
           summary: { type: "string" },
         },
         required: ["position", "summary"],
       },
     },
-    cook_time_min: { type: ["number", "null"] },
-    servings: { type: ["number", "null"] },
+    cook_time_min: { type: "integer", nullable: true },
+    servings: { type: "integer", nullable: true },
     dish_roles: {
       type: "array",
-      items: { enum: ["main", "side", "one_dish", "soup", "staple"] },
+      items: { type: "string", enum: ["main", "side", "one_dish", "soup", "staple"] },
     },
-    main_ingredient_category: { type: ["string", "null"] },
-    cooking_method: { type: ["string", "null"], enum: ["fry", "simmer", "grill", "steam", "raw", null] },
+    main_ingredient_category: { type: "string", nullable: true },
+    // cooking_method は nullable のため enum を付けず、プロンプトで値を制約する
+    // （nullable と enum の併用は null 非許容と衝突しうるため）。
+    cooking_method: { type: "string", nullable: true },
     tags: { type: "array", items: { type: "string" } },
   },
   required: ["title", "ingredients", "steps"],
