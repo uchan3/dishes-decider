@@ -49,9 +49,13 @@ export async function safeFetch(rawUrl: string, options: FetchOptions = {}): Pro
         redirect: "manual",
         signal: controller.signal,
         headers: {
-          "user-agent": "RecipePlannerBot/0.1 (+personal use)",
-          accept: "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
-        },
+            "user-agent":
+              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+              "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            accept:
+              "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "accept-language": "ja,en-US;q=0.9,en;q=0.8",
+          },
       });
     } finally {
       clearTimeout(timer);
