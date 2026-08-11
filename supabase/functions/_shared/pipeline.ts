@@ -11,7 +11,9 @@ import {
   applySimilarityGate,
   extractJsonLdBlocks,
   extractRecipeFromJsonLd,
+  extractYouTubeContent,
   htmlToText,
+  isYouTubeUrl,
   SIMILARITY_THRESHOLDS,
   type ExtractionMethod,
   type ExtractionProvider,
@@ -88,9 +90,20 @@ export async function extractFromContent(
     }
   }
 
-  // Tier 1/2: 本文を LLM に投げる（HTML はテキスト化してトークン削減）。
-  const text = kind === "html" ? htmlToText(content) : content;
-  const extraction = await options.provider.extract({ url, text, titleHint: null });
+  // Tier 1/2: 本文を LLM に投げる。
+  // YouTube の watch HTML は概要欄が <script>(ytInitialPlayerResponse) 内にあり
+  // htmlToText では落ちるため、専用に概要欄＋タイトルを抜いて渡す。
+  let text: string;
+  let titleHint: string | null = null;
+  if (kind === "html" && isYouTubeUrl(url)) {
+    const yt = extractYouTubeContent(content);
+    titleHint = yt.title;
+    const body = yt.description ?? htmlToText(content);
+    text = yt.title ? `タイトル: ${yt.title}\n\n${body}` : body;
+  } else {
+    text = kind === "html" ? htmlToText(content) : content;
+  }
+  const extraction = await options.provider.extract({ url, text, titleHint });
 
   // LLM 経路は per-step の原文が無いため、各要約を「入力本文全体」と突合する。
   // 再生成は追加の LLM 呼び出しになり無料枠を圧迫するため行わず、超過した要約は
