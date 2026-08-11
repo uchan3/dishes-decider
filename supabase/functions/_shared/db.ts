@@ -35,6 +35,12 @@ export async function resolveIngestToken(
     .select("id, user_id, revoked_at")
     .eq("token_hash", tokenHash)
     .maybeSingle();
+  // 照合ずれの切り分け用ログ（ハッシュ先頭16文字のみ。生トークンは出さない）。
+  console.log(
+    `[ingest] token lookup: hash16=${tokenHash.slice(0, 16)} ` +
+      `found=${!!data} revoked=${data?.revoked_at ?? "-"} ` +
+      `error=${error ? `${error.code}:${error.message}` : "none"}`,
+  );
   if (error || !data || data.revoked_at) return null;
   // 最終利用時刻を更新（ベストエフォート）。
   await db.from("ingest_tokens").update({ last_used_at: new Date().toISOString() }).eq("id", data.id);
