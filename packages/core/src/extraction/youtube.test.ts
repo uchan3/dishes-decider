@@ -4,7 +4,22 @@ import {
   extractYouTubeDescription,
   extractYouTubeTitle,
   isYouTubeUrl,
+  youtubeVideoId,
 } from "./youtube.ts";
+
+describe("youtubeVideoId", () => {
+  it("extracts id from watch, youtu.be, embed, shorts", () => {
+    expect(youtubeVideoId("https://www.youtube.com/watch?v=abc123&si=x")).toBe("abc123");
+    expect(youtubeVideoId("https://youtu.be/abc123")).toBe("abc123");
+    expect(youtubeVideoId("https://www.youtube.com/embed/abc123")).toBe("abc123");
+    expect(youtubeVideoId("https://youtube.com/shorts/abc123")).toBe("abc123");
+  });
+
+  it("returns null for non-YouTube or invalid", () => {
+    expect(youtubeVideoId("https://example.com/x")).toBeNull();
+    expect(youtubeVideoId("nope")).toBeNull();
+  });
+});
 
 describe("isYouTubeUrl", () => {
   it("recognizes YouTube hosts", () => {

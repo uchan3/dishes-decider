@@ -18,6 +18,7 @@ export { applySimilarityGate, type RegenerateStep, type GateOptions } from "./ga
 export { extractJsonLdBlocks, htmlToText } from "./html.ts";
 export {
   isYouTubeUrl,
+  youtubeVideoId,
   extractYouTubeDescription,
   extractYouTubeTitle,
   extractYouTubeContent,

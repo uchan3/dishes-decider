@@ -8,6 +8,30 @@
  * 弾かれるため）。DOM 非依存・依存ゼロで Deno/ブラウザ両対応。
  */
 
+/**
+ * YouTube URL から動画 ID を抽出する。該当しなければ null。
+ * 対応: `watch?v=`, `youtu.be/`, `/embed/`, `/shorts/`。
+ */
+export function youtubeVideoId(url: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  const host = parsed.hostname.replace(/^www\./, "");
+  if (host === "youtu.be") {
+    const id = parsed.pathname.slice(1).split("/")[0];
+    return id || null;
+  }
+  if (host === "youtube.com" || host === "m.youtube.com" || host === "music.youtube.com") {
+    if (parsed.pathname === "/watch") return parsed.searchParams.get("v");
+    const m = parsed.pathname.match(/^\/(?:embed|shorts)\/([^/]+)/);
+    if (m) return m[1] ?? null;
+  }
+  return null;
+}
+
 /** YouTube のホストか判定する。 */
 export function isYouTubeUrl(url: string): boolean {
   try {
