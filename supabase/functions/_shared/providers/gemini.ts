@@ -14,7 +14,9 @@ import {
   type RecipeExtractionResult,
 } from "@recipe-planner/core/extraction";
 
-const GEMINI_MODEL = "gemini-2.5-flash";
+// モデル名は環境変数 GEMINI_MODEL で上書き可能（Google のモデル更新に追従するため）。
+// 既定は現行 GA の Flash。無料枠のレート上限に触れる場合は gemini-3.5-flash-lite に切替。
+const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL") ?? "gemini-3.6-flash";
 const ENDPOINT = (model: string, key: string) =>
   `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
 
