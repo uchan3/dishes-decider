@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@recipe-planner/core": "workspace:*",
+    "@supabase/supabase-js": "^2.47.10",
     "dexie": "^4.0.11",
     "dexie-react-hooks": "^1.1.7",
     "react": "^19.0.0",

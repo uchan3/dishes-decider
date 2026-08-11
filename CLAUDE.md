@@ -92,7 +92,8 @@ pnpm --filter @recipe-planner/web typecheck
 - `src/lib/planning.ts` — core (`generateMealPlan` / `aggregateShoppingList`) と Dexie を繋ぐ層。`generateWeek()` が献立を生成し Dexie に保存、`buildShoppingItems()` が買い物リストを集約。**週の「作り直す」は常に `generateWeek`**（現在の曜日テンプレで構造から再生成し、既存プランのロック済みスロットを slotId 一致で引き継ぐ）。スロット/食事の再抽選(US-05): `reshuffleSlot`(必ず別レシピ・代替無ければ現状維持) / `reshuffleMeal`（ロック維持）/ `toggleSlotLock`(US-06)。共通ロジックは `reshuffleSlots`（対象外・ロック済みのレシピを除外して再抽選）。生成・再抽選とも `loadEligibleRecipes()` 経由でレシピを読み、**無効ソース(`is_enabled=false`)のレシピを除外**(US-03)
 - 曜日ごとの献立構成(US-07): `lib/mealTemplates.ts`（プリセット6種＋月起点の週割り当て）＋ `lib/settings.ts`（Dexie の `settings` KVストア。schema **v2** で追加）。設定画面で曜日別にテンプレ選択。`eat_out`(空スロット) の日は `is_skipped` の Meal になり生成対象外
 - `src/db/seed.ts` — 開発用サンプルデータ（抽出パイプライン未実装のため。設定画面から投入）
-- **オフライン同期（outbox → Supabase）は未実装**。現状 Dexie はローカルのみ
+- **Supabase 連携（レシピライブラリのみ）**: `lib/supabase.ts`(クライアント・`VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY`) / `lib/auth.tsx`(メール＋パスワード認証コンテキスト) / `AppGate.tsx`(未認証はログイン画面、認証時に同期起動) / `lib/sync.ts`(`pullLibrary`: recipes/sources/ingredients を Supabase→Dexie に一方向プル、`subscribeImports`: import_jobs の Realtime で取り込み完了時に再プル)。**UI は常に Dexie から読む**（Supabase は同期元）。env 未設定ならログインを出さずローカル Dexie のみで動作
+- **献立・買い物リストの双方向同期（outbox → Supabase）は未実装**。手動レシピ登録も現状 Dexie のみ（Supabase 書き込みは後続）
 
 ### packages/core の構成
 - `src/types/` — 共有ドメイン型（DB は snake_case、ドメイン層は camelCase。変換は永続化層の責務）
