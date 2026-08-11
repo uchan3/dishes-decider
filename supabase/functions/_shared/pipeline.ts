@@ -73,7 +73,7 @@ export async function extractFromContent(
   const threshold = options.threshold ?? SIMILARITY_THRESHOLDS.private;
   console.log(
     `[pipeline] extractFromContent kind=${kind} contentLen=${content.length} ` +
-      `youtube=${isYouTubeUrl(url)} url=${url}`,
+      `youtube=${isYouTubeUrl(url)} head=${JSON.stringify(content.slice(0, 60))} url=${url}`,
   );
 
   // Tier 0: HTML なら JSON-LD 直接マッピングを試す。
