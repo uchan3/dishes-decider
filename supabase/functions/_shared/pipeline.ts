@@ -71,6 +71,10 @@ export async function extractFromContent(
   options: PipelineOptions,
 ): Promise<PipelineResult> {
   const threshold = options.threshold ?? SIMILARITY_THRESHOLDS.private;
+  console.log(
+    `[pipeline] extractFromContent kind=${kind} contentLen=${content.length} ` +
+      `youtube=${isYouTubeUrl(url)} url=${url}`,
+  );
 
   // Tier 0: HTML なら JSON-LD 直接マッピングを試す。
   if (kind === "html") {
@@ -97,6 +101,10 @@ export async function extractFromContent(
   let titleHint: string | null = null;
   if (kind === "html" && isYouTubeUrl(url)) {
     const yt = extractYouTubeContent(content);
+    console.log(
+      `[pipeline] youtube: titleFound=${yt.title !== null} ` +
+        `descFound=${yt.description !== null} descLen=${yt.description?.length ?? 0}`,
+    );
     titleHint = yt.title;
     const body = yt.description ?? htmlToText(content);
     text = yt.title ? `タイトル: ${yt.title}\n\n${body}` : body;
