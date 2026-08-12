@@ -9,6 +9,8 @@ import {
   type WeekdayTemplates,
 } from "../lib/mealTemplates.ts";
 import { loadWeekdayTemplates, saveWeekdayTemplates } from "../lib/settings.ts";
+import { useAuth } from "../lib/auth.tsx";
+import { pullLibrary } from "../lib/sync.ts";
 
 const KIND_LABEL: Record<string, string> = {
   youtube: "YouTube",
@@ -32,9 +34,22 @@ export function SettingsPage() {
   }, []);
 
   const weekdayTemplates = useLiveQuery(() => loadWeekdayTemplates(), []);
+  const { configured, session, signOut } = useAuth();
 
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+
+  async function handleSync() {
+    setBusy(true);
+    try {
+      const n = await pullLibrary();
+      setMessage(`同期しました（レシピ ${n} 件）。`);
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "同期に失敗しました");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   function setWeekdayTemplate(index: number, templateId: TemplateId) {
     if (!weekdayTemplates) return;
@@ -77,6 +92,24 @@ export function SettingsPage() {
   return (
     <section>
       <h1>設定</h1>
+
+      {configured && (
+        <div className="card">
+          <h2>アカウント</h2>
+          <p className="muted">{session?.user.email ?? "サインイン中"}</p>
+          <div className="btn-row">
+            <button onClick={handleSync} disabled={busy} className="btn btn--primary">
+              今すぐ同期
+            </button>
+            <button onClick={() => void signOut()} disabled={busy} className="btn">
+              サインアウト
+            </button>
+          </div>
+          <p className="muted">
+            取り込んだレシピは自動で同期されます（取り込み完了時に反映）。
+          </p>
+        </div>
+      )}
 
       <div className="card">
         <h2>曜日ごとの献立構成</h2>

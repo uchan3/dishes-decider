@@ -619,6 +619,30 @@ a {
   text-decoration: underline;
 }
 
+/* --- ログイン --- */
+.login {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.login__card {
+  width: 100%;
+  max-width: 360px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 24px;
+}
+
+.login__card h1 {
+  font-size: 1.2rem;
+  text-align: center;
+  margin-bottom: 16px;
+}
+
 /* --- ソース管理 --- */
 .source-list {
   list-style: none;
