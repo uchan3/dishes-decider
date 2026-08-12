@@ -81,7 +81,14 @@ pnpm --filter @recipe-planner/web build     # 本番ビルド（vite build、PWA
 pnpm --filter @recipe-planner/web typecheck
 ```
 
-`packages/core` はビルド不要（`.ts` ソースを Vite / Deno が直接消費する）。`exports` は `.ts` を指し、Vite 側は `optimizeDeps.exclude` で prebundle を回避している。`supabase/functions` は未スキャフォールド。
+`packages/core` はビルド不要（`.ts` ソースを Vite / Deno が直接消費する）。`exports` は `.ts` を指し、Vite 側は `optimizeDeps.exclude` で prebundle を回避している。
+
+### 配信（Cloudflare Pages・GitHub 連携で自動デプロイ）
+- **Root directory**: リポジトリ直下（モノレポのため。core を workspace 解決する必要がある）
+- **Build command**: `pnpm --filter @recipe-planner/web build`（CF が pnpm-lock.yaml から install を自動実行）
+- **Build output**: `apps/web/dist`
+- **環境変数**: `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY`（ビルド時に焼き込まれる）、`NODE_VERSION=20`
+- SPA ディープリンクは `apps/web/public/_redirects`（`/* /index.html 200`）で index.html にフォールバック
 
 ### apps/web の構成
 - Vite + React 19 + React Router v7 + vite-plugin-pwa。UI は `src/routes/`（Home=献立生成 / Library / RecipeDetail=`/recipe/:id` / Add=手動レシピ登録 / Shopping / Settings）、共通シェルは `src/components/Layout.tsx`（下部タブ）
