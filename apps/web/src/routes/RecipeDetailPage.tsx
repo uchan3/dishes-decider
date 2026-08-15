@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../db/schema.ts";
-import { parseTags, updateRecipe } from "../lib/recipeEdit.ts";
+import { deleteRecipe, parseTags, updateRecipe } from "../lib/recipeEdit.ts";
 import { youtubeVideoId } from "../lib/youtube.ts";
 
 const ROLE_LABEL: Record<string, string> = {
@@ -24,6 +24,7 @@ const METHOD_LABEL: Record<string, string> = {
 /** レシピ詳細画面。材料・原典リンク・お気に入り/タグ編集・除外を扱う。 */
 export function RecipeDetailPage() {
   const { id = "" } = useParams();
+  const navigate = useNavigate();
   const recipe = useLiveQuery(() => db.recipes.get(id), [id]);
   const ingredients = useLiveQuery(
     () => db.recipeIngredients.where("recipe_id").equals(id).sortBy("position"),
@@ -43,6 +44,22 @@ export function RecipeDetailPage() {
       setTagsDirty(false);
     }
   }, [recipe?.id]);
+
+  // 削除は誤操作防止のため2段階（確認）にする。
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  async function handleDelete() {
+    setDeleting(true);
+    try {
+      await deleteRecipe(id);
+      navigate("/library");
+    } catch (e) {
+      setDeleting(false);
+      setConfirmDelete(false);
+      alert(e instanceof Error ? e.message : "削除に失敗しました");
+    }
+  }
 
   if (recipe === undefined) return <p className="muted">読み込み中…</p>;
   if (recipe === null) {
@@ -161,6 +178,25 @@ export function RecipeDetailPage() {
         <button className="btn" onClick={saveTags} disabled={!tagsDirty}>
           タグを保存
         </button>
+      </div>
+
+      <div className="card">
+        <h2>このレシピを削除</h2>
+        <p className="muted">重複や取り込み失敗したレシピを削除します。元に戻せません。</p>
+        {confirmDelete ? (
+          <div className="btn-row">
+            <button className="btn btn--danger" onClick={handleDelete} disabled={deleting}>
+              {deleting ? "削除中…" : "本当に削除する"}
+            </button>
+            <button className="btn" onClick={() => setConfirmDelete(false)} disabled={deleting}>
+              キャンセル
+            </button>
+          </div>
+        ) : (
+          <button className="btn btn--danger" onClick={() => setConfirmDelete(true)}>
+            削除
+          </button>
+        )}
       </div>
     </section>
   );
