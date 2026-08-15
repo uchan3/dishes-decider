@@ -1,0 +1,12 @@
+{
+  // Cloudflare Workers Static Assets で PWA（静的 SPA）を配信する。
+  // Workers Builds（GitHub 連携）の Deploy command `npx wrangler deploy` がこれを使う。
+  // build は `pnpm --filter @recipe-planner/web build` で apps/web/dist を生成する。
+  "name": "dishes-decider",
+  "compatibility_date": "2025-08-01",
+  "assets": {
+    "directory": "apps/web/dist",
+    // クライアントルーティング（React Router）の deep link を index.html にフォールバック。
+    "not_found_handling": "single-page-application"
+  }
+}
