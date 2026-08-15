@@ -89,7 +89,7 @@ pnpm --filter @recipe-planner/web typecheck
 - **Deploy command**: `npx wrangler deploy`（`wrangler.jsonc` を読む）
 - **Path/Root**: `/`（モノレポのため。core を workspace 解決する）
 - **環境変数（ビルド時に焼き込み）**: `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY` / `NODE_VERSION=20`
-- （`apps/web/public/_redirects` は Pages 用。Workers 配信では `not_found_handling` が SPA fallback を担うため未使用だが残置は無害）
+- SPA fallback は `not_found_handling` が担う。**`_redirects` は置かないこと**（Workers Static Assets も読み込み、`/* /index.html 200` は「無限ループ」判定でデプロイが失敗する code:100324）
 
 ### apps/web の構成
 - Vite + React 19 + React Router v7 + vite-plugin-pwa。UI は `src/routes/`（Home=献立生成 / Library / RecipeDetail=`/recipe/:id` / Add=手動レシピ登録 / Shopping / Settings）、共通シェルは `src/components/Layout.tsx`（下部タブ）
