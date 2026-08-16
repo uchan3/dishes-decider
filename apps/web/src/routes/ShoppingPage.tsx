@@ -1,10 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
-import type { IngredientCategory, ShoppingItem } from "@recipe-planner/core";
-import { db } from "../db/schema.ts";
+import type { IngredientCategory } from "@recipe-planner/core";
+import { db, type ShoppingItemRow } from "../db/schema.ts";
 import { startOfWeek, today } from "../lib/date.ts";
-import { buildShoppingItems } from "../lib/planning.ts";
+import {
+  clearChecked,
+  pantryIngredientIds,
+  setItemChecked,
+  syncShoppingList,
+} from "../lib/shopping.ts";
 
 const CATEGORY_META: Record<IngredientCategory, { icon: string; label: string }> = {
   vegetable: { icon: "🥬", label: "野菜" },
@@ -19,51 +24,60 @@ const CATEGORY_META: Record<IngredientCategory, { icon: string; label: string }>
 
 const HOUSEHOLD_SIZE = 2;
 
-/** 買い物リスト画面。今週の献立から材料を集約し、売場カテゴリ別に表示する。 */
+/**
+ * 買い物リスト画面。今週の献立から集約した項目を Dexie に保存し、売場カテゴリ別に表示する。
+ *
+ * チェック状態は Dexie に永続化されるため、画面を離れても・オフラインでも保たれる（US-09）。
+ */
 export function ShoppingPage() {
   const weekStart = startOfWeek(today());
-  const plan = useLiveQuery(() => db.mealPlans.get(`plan-${weekStart}`), [weekStart]);
+  const planId = `plan-${weekStart}`;
+  const plan = useLiveQuery(() => db.mealPlans.get(planId), [planId]);
 
   const [includePantry, setIncludePantry] = useState(false);
-  const [items, setItems] = useState<ShoppingItem[] | null>(null);
-  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [syncing, setSyncing] = useState(false);
 
+  // 献立が変わったら項目を組み立て直す（既存項目のチェックは引き継がれる）。
+  const planRevision = plan?.updated_at;
   useEffect(() => {
-    if (!plan) {
-      setItems(null);
-      return;
-    }
+    if (!plan) return;
     let alive = true;
-    buildShoppingItems(plan, HOUSEHOLD_SIZE, includePantry).then((result) => {
-      if (alive) setItems(result);
+    setSyncing(true);
+    void syncShoppingList(plan, HOUSEHOLD_SIZE).finally(() => {
+      if (alive) setSyncing(false);
     });
     return () => {
       alive = false;
     };
-  }, [plan, includePantry]);
+    // plan の内容が変わったときだけ作り直す（liveQuery は同内容でも新しい参照を返すため）。
+  }, [planId, planRevision]);
+
+  const items = useLiveQuery(async () => {
+    const rows = await db.shoppingItems.where("meal_plan_id").equals(planId).toArray();
+    return rows.sort((a, b) => a.position - b.position);
+  }, [planId]);
+
+  const pantryIds = useLiveQuery(() => pantryIngredientIds(), [], new Set<string>());
+
+  const isPantry = (row: ShoppingItemRow): boolean =>
+    row.ingredient_id !== null && pantryIds.has(row.ingredient_id);
+
+  const visible = useMemo(
+    () => (items ?? []).filter((row) => includePantry || !isPantry(row)),
+    [items, includePantry, pantryIds],
+  );
+
+  const hiddenPantryCount = (items ?? []).length - visible.length;
 
   const grouped = useMemo(() => {
-    const map = new Map<IngredientCategory, ShoppingItem[]>();
-    for (const item of items ?? []) {
-      const list = map.get(item.category) ?? [];
-      list.push(item);
-      map.set(item.category, list);
+    const map = new Map<IngredientCategory, ShoppingItemRow[]>();
+    for (const row of visible) {
+      const list = map.get(row.category) ?? [];
+      list.push(row);
+      map.set(row.category, list);
     }
     return map;
-  }, [items]);
-
-  function keyOf(item: ShoppingItem): string {
-    return item.ingredientId ?? item.displayName;
-  }
-
-  function toggle(key: string) {
-    setChecked((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }
+  }, [visible]);
 
   if (!plan) {
     return (
@@ -79,8 +93,7 @@ export function ShoppingPage() {
     );
   }
 
-  const total = items?.length ?? 0;
-  const doneCount = [...checked].length;
+  const doneCount = visible.filter((row) => row.is_checked).length;
 
   return (
     <section>
@@ -96,8 +109,21 @@ export function ShoppingPage() {
         </label>
       </header>
       <p className="muted">
-        {doneCount} / {total} 完了
+        {doneCount} / {visible.length} 完了
+        {hiddenPantryCount > 0 && ` ・ 常備品 ${hiddenPantryCount} 件を非表示`}
+        {syncing && " ・ 更新中…"}
       </p>
+      {doneCount > 0 && (
+        <button className="btn" onClick={() => void clearChecked(planId)}>
+          チェックをすべて外す
+        </button>
+      )}
+
+      {items !== undefined && visible.length === 0 && (
+        <div className="empty">
+          <p>買うものがありません。</p>
+        </div>
+      )}
 
       {[...grouped.entries()].map(([category, list]) => {
         const meta = CATEGORY_META[category];
@@ -107,24 +133,27 @@ export function ShoppingPage() {
               {meta.icon} {meta.label}
             </h2>
             <ul className="shop-list">
-              {list.map((item) => {
-                const key = keyOf(item);
-                const isChecked = checked.has(key);
-                return (
-                  <li key={key} className={isChecked ? "shop-item shop-item--done" : "shop-item"}>
-                    <label>
-                      <input type="checkbox" checked={isChecked} onChange={() => toggle(key)} />
-                      <span className="shop-item__name">{item.displayName}</span>
-                      <span className="shop-item__qty">
-                        {item.quantity !== null && `${item.quantity}${item.unit ?? ""}`}
-                        {item.ambiguousNote && (
-                          <em className="shop-item__note"> {item.ambiguousNote}</em>
-                        )}
-                      </span>
-                    </label>
-                  </li>
-                );
-              })}
+              {list.map((row) => (
+                <li
+                  key={row.id}
+                  className={row.is_checked ? "shop-item shop-item--done" : "shop-item"}
+                >
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={row.is_checked}
+                      onChange={(e) => void setItemChecked(row.id, e.target.checked)}
+                    />
+                    <span className="shop-item__name">{row.display_name}</span>
+                    <span className="shop-item__qty">
+                      {row.quantity !== null && `${row.quantity}${row.unit ?? ""}`}
+                      {row.ambiguous_note && (
+                        <em className="shop-item__note"> {row.ambiguous_note}</em>
+                      )}
+                    </span>
+                  </label>
+                </li>
+              ))}
             </ul>
           </div>
         );
