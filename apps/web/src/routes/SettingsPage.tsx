@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
+import type { IngredientCategory } from "@recipe-planner/core";
 import { db } from "../db/schema.ts";
 import { seedSampleData } from "../db/seed.ts";
 import {
@@ -8,11 +9,41 @@ import {
   type TemplateId,
   type WeekdayTemplates,
 } from "../lib/mealTemplates.ts";
-import { loadWeekdayTemplates, saveWeekdayTemplates } from "../lib/settings.ts";
+import {
+  loadPlanningSettings,
+  loadWeekdayTemplates,
+  savePlanningSettings,
+  saveWeekdayTemplates,
+  type PlanningSettings,
+} from "../lib/settings.ts";
+import { setPantryStaple } from "../lib/ingredients.ts";
 import { useAuth } from "../lib/auth.tsx";
 import { pullLibrary } from "../lib/sync.ts";
 import { relinkIngredients } from "../lib/relink.ts";
 import { setSourceEnabled } from "../lib/sources.ts";
+
+/** 売場カテゴリの並び順とラベル（買い物リストの導線順に合わせる）。 */
+const CATEGORY_ORDER: IngredientCategory[] = [
+  "vegetable",
+  "meat",
+  "seafood",
+  "dairy_egg",
+  "seasoning",
+  "dry_goods",
+  "frozen",
+  "other",
+];
+
+const CATEGORY_LABEL: Record<IngredientCategory, string> = {
+  vegetable: "野菜",
+  meat: "肉",
+  seafood: "魚",
+  dairy_egg: "乳製品・卵",
+  seasoning: "調味料",
+  dry_goods: "乾物",
+  frozen: "冷凍",
+  other: "その他",
+};
 
 const KIND_LABEL: Record<string, string> = {
   youtube: "YouTube",
@@ -36,6 +67,16 @@ export function SettingsPage() {
   }, []);
 
   const weekdayTemplates = useLiveQuery(() => loadWeekdayTemplates(), []);
+  const planning = useLiveQuery(() => loadPlanningSettings(), []);
+  // 常備品の編集用。売場カテゴリ順 → 名前順で並べる。
+  const masters = useLiveQuery(async () => {
+    const rows = await db.ingredients.toArray();
+    return rows.sort(
+      (a, b) =>
+        CATEGORY_ORDER.indexOf(a.category) - CATEGORY_ORDER.indexOf(b.category) ||
+        a.canonical_name.localeCompare(b.canonical_name, "ja"),
+    );
+  }, []);
   const { configured, session, userId, signOut } = useAuth();
 
   /** 食材マスタに紐付いていない材料の数（再照合の要否を示す）。 */
@@ -74,6 +115,19 @@ export function SettingsPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  /** 生成設定を 1 項目だけ更新して保存する（保存時に正規化される）。 */
+  function updatePlanning(patch: Partial<PlanningSettings>) {
+    if (!planning) return;
+    void savePlanningSettings({ ...planning, ...patch });
+  }
+
+  /** 常備品フラグを切り替える。買い物リストの既定表示から外れる（US-10）。 */
+  function togglePantry(id: string, next: boolean) {
+    void setPantryStaple(id, next).catch((e: unknown) => {
+      setMessage(e instanceof Error ? e.message : "食材の更新に失敗しました");
+    });
   }
 
   function setWeekdayTemplate(index: number, templateId: TemplateId) {
@@ -138,6 +192,83 @@ export function SettingsPage() {
           </p>
         </div>
       )}
+
+      <div className="card">
+        <h2>献立の生成設定</h2>
+        <p className="muted">次回の生成・再抽選から反映されます。</p>
+        {!planning ? (
+          <p className="muted">読み込み中…</p>
+        ) : (
+          <ul className="setting-list">
+            <li className="setting-item">
+              <label htmlFor="household-size">世帯人数</label>
+              <span className="setting-item__control">
+                <input
+                  id="household-size"
+                  type="number"
+                  min={1}
+                  max={12}
+                  value={planning.householdSize}
+                  onChange={(e) => updatePlanning({ householdSize: Number(e.target.value) })}
+                />
+                <span className="muted">人</span>
+              </span>
+            </li>
+            <li className="setting-item">
+              <label htmlFor="cooldown-days">クールダウン</label>
+              <span className="setting-item__control">
+                <input
+                  id="cooldown-days"
+                  type="number"
+                  min={0}
+                  max={365}
+                  value={planning.cooldownDays}
+                  onChange={(e) => updatePlanning({ cooldownDays: Number(e.target.value) })}
+                />
+                <span className="muted">日以内に作った料理は出さない</span>
+              </span>
+            </li>
+            <li className="setting-item">
+              <label htmlFor="weekday-max">平日の調理時間</label>
+              <span className="setting-item__control">
+                <input
+                  id="weekday-max"
+                  type="number"
+                  min={1}
+                  max={600}
+                  placeholder="制限なし"
+                  value={planning.weekdayMaxCookMin ?? ""}
+                  onChange={(e) =>
+                    updatePlanning({
+                      weekdayMaxCookMin: e.target.value === "" ? null : Number(e.target.value),
+                    })
+                  }
+                />
+                <span className="muted">分以内（空欄で制限なし）</span>
+              </span>
+            </li>
+            <li className="setting-item">
+              <label htmlFor="weekend-max">休日の調理時間</label>
+              <span className="setting-item__control">
+                <input
+                  id="weekend-max"
+                  type="number"
+                  min={1}
+                  max={600}
+                  placeholder="制限なし"
+                  value={planning.weekendMaxCookMin ?? ""}
+                  onChange={(e) =>
+                    updatePlanning({
+                      weekendMaxCookMin: e.target.value === "" ? null : Number(e.target.value),
+                    })
+                  }
+                />
+                <span className="muted">分以内（空欄で制限なし）</span>
+              </span>
+            </li>
+          </ul>
+        )}
+      </div>
 
       <div className="card">
         <h2>曜日ごとの献立構成</h2>
@@ -220,6 +351,37 @@ export function SettingsPage() {
       </div>
 
       <div className="card">
+        <h2>常備品</h2>
+        <p className="muted">
+          常備品にした食材は買い物リストから既定で除外されます（買い物リスト画面の「常備品も表示」で確認できます）。
+        </p>
+        {!masters ? (
+          <p className="muted">読み込み中…</p>
+        ) : masters.length === 0 ? (
+          <p className="muted">食材がまだありません。</p>
+        ) : (
+          <ul className="pantry-list">
+            {masters.map((m) => (
+              <li key={m.id} className="pantry-item">
+                <div className="pantry-item__main">
+                  <span className="pantry-item__name">{m.canonical_name}</span>
+                  <span className="pantry-item__meta">{CATEGORY_LABEL[m.category]}</span>
+                </div>
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    checked={m.is_pantry_staple}
+                    onChange={(e) => togglePantry(m.id, e.target.checked)}
+                  />
+                  <span>{m.is_pantry_staple ? "常備品" : "毎回買う"}</span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div className="card">
         <h2>開発用データ</h2>
         <p className="muted">現在のレシピ件数: {recipeCount}</p>
         <div className="btn-row">
@@ -236,9 +398,8 @@ export function SettingsPage() {
       <div className="card">
         <h2>今後実装予定</h2>
         <ul className="muted">
-          <li>常備品（パントリー）管理</li>
-          <li>世帯人数・クールダウン等の生成設定</li>
-          <li>食材マスタの統合</li>
+          <li>買い物リストへの手動追加</li>
+          <li>食材マスタの統合（表記ゆれのマージ）</li>
         </ul>
       </div>
     </section>

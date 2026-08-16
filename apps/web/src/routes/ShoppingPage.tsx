@@ -10,6 +10,7 @@ import {
   setItemChecked,
   syncShoppingList,
 } from "../lib/shopping.ts";
+import { loadPlanningSettings } from "../lib/settings.ts";
 
 const CATEGORY_META: Record<IngredientCategory, { icon: string; label: string }> = {
   vegetable: { icon: "🥬", label: "野菜" },
@@ -21,8 +22,6 @@ const CATEGORY_META: Record<IngredientCategory, { icon: string; label: string }>
   frozen: { icon: "🧊", label: "冷凍" },
   other: { icon: "🧺", label: "その他" },
 };
-
-const HOUSEHOLD_SIZE = 2;
 
 /**
  * 買い物リスト画面。今週の献立から集約した項目を Dexie に保存し、売場カテゴリ別に表示する。
@@ -37,20 +36,22 @@ export function ShoppingPage() {
   const [includePantry, setIncludePantry] = useState(false);
   const [syncing, setSyncing] = useState(false);
 
-  // 献立が変わったら項目を組み立て直す（既存項目のチェックは引き継がれる）。
+  const householdSize = useLiveQuery(async () => (await loadPlanningSettings()).householdSize, []);
+
+  // 献立か世帯人数が変わったら項目を組み立て直す（既存項目のチェックは引き継がれる）。
   const planRevision = plan?.updated_at;
   useEffect(() => {
-    if (!plan) return;
+    if (!plan || householdSize === undefined) return;
     let alive = true;
     setSyncing(true);
-    void syncShoppingList(plan, HOUSEHOLD_SIZE).finally(() => {
+    void syncShoppingList(plan, householdSize).finally(() => {
       if (alive) setSyncing(false);
     });
     return () => {
       alive = false;
     };
     // plan の内容が変わったときだけ作り直す（liveQuery は同内容でも新しい参照を返すため）。
-  }, [planId, planRevision]);
+  }, [planId, planRevision, householdSize]);
 
   const items = useLiveQuery(async () => {
     const rows = await db.shoppingItems.where("meal_plan_id").equals(planId).toArray();

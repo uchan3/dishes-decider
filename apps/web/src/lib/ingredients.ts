@@ -11,7 +11,9 @@ import {
   matchIngredientMaster,
   type IngredientIndex,
 } from "@recipe-planner/core";
-import type { IngredientRow } from "../db/schema.ts";
+import { db, type IngredientRow } from "../db/schema.ts";
+import { supabase, isSupabaseConfigured } from "./supabase.ts";
+import { isUuid } from "./ids.ts";
 
 /** マスタ行から照合対象の名前（正規名 + 別名）を取り出す。 */
 const keysOf = (m: IngredientRow): string[] => [m.canonical_name, ...m.aliases];
@@ -38,4 +40,21 @@ export function ingredientIndex(
   masters: readonly IngredientRow[],
 ): IngredientIndex<IngredientRow> {
   return createIngredientIndex(masters, keysOf);
+}
+
+/**
+ * 食材の常備品フラグを切り替える（US-10）。
+ *
+ * 常備品は買い物リストから既定で除外される。Dexie だけ直すと次回プルで巻き戻るため
+ * Supabase にも書く（ローカルにしか無い行・共通マスタは Supabase 側 0 件更新の no-op）。
+ */
+export async function setPantryStaple(id: string, isPantryStaple: boolean): Promise<void> {
+  if (isSupabaseConfigured && isUuid(id)) {
+    const { error } = await supabase
+      .from("ingredients")
+      .update({ is_pantry_staple: isPantryStaple })
+      .eq("id", id);
+    if (error) throw new Error(`食材の更新に失敗しました: ${error.message}`);
+  }
+  await db.ingredients.update(id, { is_pantry_staple: isPantryStaple });
 }
