@@ -2,9 +2,8 @@
  * 手動レシピ登録の保存ロジック（US-02）。
  *
  * フォーム入力を Dexie に書き込む。食材は既存マスタに照合し、未ヒットなら新規マスタを
- * 作成する（正規化は core の {@link normalizeIngredientName} 経由、§5.3 の簡易版）。
- *
- * 抽出パイプライン未実装のため、これが実データを増やす当面の主経路になる。
+ * 作成する（照合は core の索引経由、§5.3）。取り込みパイプラインと同じ照合ロジックを
+ * 使うため、手動登録と URL 取り込みで同じ食材が別マスタに分かれない。
  */
 
 import type {
@@ -19,7 +18,7 @@ import {
   type RecipeRow,
   type SourceRow,
 } from "../db/schema.ts";
-import { matchMaster } from "./ingredients.ts";
+import { ingredientIndex } from "./ingredients.ts";
 
 /** フォームの 1 材料行。 */
 export interface RecipeFormIngredient {
@@ -80,7 +79,7 @@ const now = (): string => new Date().toISOString();
  */
 export async function saveManualRecipe(data: RecipeFormData): Promise<string> {
   const recipeId = uuid();
-  const masters = await db.ingredients.toArray();
+  const masterIndex = ingredientIndex(await db.ingredients.toArray());
   const newMasters: IngredientRow[] = [];
 
   const lines: RecipeIngredientRow[] = [];
@@ -88,9 +87,10 @@ export async function saveManualRecipe(data: RecipeFormData): Promise<string> {
     .filter((i) => i.displayName.trim() !== "")
     .forEach((line, index) => {
       const name = line.displayName.trim();
-      let master = matchMaster(name, [...masters, ...newMasters]);
+      let master = masterIndex.match(name);
       if (!master) {
         // 未ヒット → 新規マスタを作成（§5.3: 確度が低ければ新規登録し後で統合を提案）。
+        // 索引にも足して、同じフォーム内に同じ食材が 2 回出ても 1 つに収束させる。
         master = {
           id: uuid(),
           canonical_name: name,
@@ -102,6 +102,7 @@ export async function saveManualRecipe(data: RecipeFormData): Promise<string> {
           sort_order: 0,
         };
         newMasters.push(master);
+        masterIndex.add(master);
       }
       const ambiguous = line.isAmbiguous || line.quantity === null;
       lines.push({

@@ -1,6 +1,7 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
+import { classifyIngredient } from "@recipe-planner/core";
 import type {
   CookingMethod,
   DishRole,
@@ -51,6 +52,8 @@ interface FormIngredient {
   unit: string;
   isAmbiguous: boolean;
   newCategory: IngredientCategory;
+  /** ユーザーが売場を手で選んだか。true なら名前を変えても自動推定で上書きしない。 */
+  categoryTouched: boolean;
 }
 
 const emptyIngredient = (): FormIngredient => ({
@@ -59,6 +62,7 @@ const emptyIngredient = (): FormIngredient => ({
   unit: "",
   isAmbiguous: false,
   newCategory: "other",
+  categoryTouched: false,
 });
 
 /** レシピ手動登録画面（US-02）。 */
@@ -88,6 +92,21 @@ export function AddPage() {
 
   function updateIngredient(index: number, patch: Partial<FormIngredient>) {
     setIngredients((prev) => prev.map((ing, i) => (i === index ? { ...ing, ...patch } : ing)));
+  }
+
+  /**
+   * 材料名の変更を反映する。新規食材の売場は取り込みパイプラインと同じ推定
+   * （{@link classifyIngredient}）を初期値にする。手で選び直した行は上書きしない。
+   */
+  function updateIngredientName(index: number, displayName: string) {
+    setIngredients((prev) =>
+      prev.map((ing, i) => {
+        if (i !== index) return ing;
+        const next = { ...ing, displayName };
+        if (!ing.categoryTouched) next.newCategory = classifyIngredient(displayName).category;
+        return next;
+      }),
+    );
   }
 
   function addIngredient() {
@@ -248,7 +267,7 @@ export function AddPage() {
                     className="ing-name"
                     list="master-names"
                     value={ing.displayName}
-                    onChange={(e) => updateIngredient(index, { displayName: e.target.value })}
+                    onChange={(e) => updateIngredientName(index, e.target.value)}
                     placeholder="玉ねぎ"
                   />
                   <input
@@ -299,6 +318,7 @@ export function AddPage() {
                         onChange={(e) =>
                           updateIngredient(index, {
                             newCategory: e.target.value as IngredientCategory,
+                            categoryTouched: true,
                           })
                         }
                       >

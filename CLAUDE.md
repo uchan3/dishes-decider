@@ -94,7 +94,8 @@ pnpm --filter @recipe-planner/web typecheck
 ### apps/web の構成
 - Vite + React 19 + React Router v7 + vite-plugin-pwa。UI は `src/routes/`（Home=献立生成 / Library / RecipeDetail=`/recipe/:id` / Add=手動レシピ登録 / Shopping / Settings）、共通シェルは `src/components/Layout.tsx`（下部タブ）
 - レシピ詳細(`/recipe/:id`): 材料・原典リンク・タイトル/お気に入り/タグ編集・除外(「もう出さないで」)・削除(2段階確認)。手順は原典が YouTube なら iframe 埋め込み(`lib/youtube.ts`)、不可なら原典リンク(§3.6/§3.7)。編集/削除は `lib/recipeEdit.ts`。**`updateRecipe`/`deleteRecipe` は Supabase 設定時に Supabase も更新/削除**（Dexie だけ変更すると次回プルで巻き戻る/復活するため）
-- 手動レシピ登録は `src/lib/recipeForm.ts`（保存）＋ `src/lib/ingredients.ts`（`matchMaster`: core の正規化キーで既存マスタ照合、未ヒットは新規マスタ作成）
+- 手動レシピ登録は `src/lib/recipeForm.ts`（保存）＋ `src/lib/ingredients.ts`（core の `createIngredientIndex`/`matchIngredientMaster` を Dexie 行に当てる薄いアダプタ。未ヒットは新規マスタ作成、売場の初期値は `classifyIngredient`）
+- `src/lib/relink.ts` — `ingredient_id` が null の材料をマスタに再照合する保守処理（設定画面から実行）。S1 以前に取り込んだレシピを救済する。Dexie と Supabase の両方を更新
 - 注意: `recipes` の Dexie インデックスは `id, source_id, *dish_roles, last_cooked_at` のみ。`title` 等の非インデックス列で `orderBy` するとエラーになるため、メモリ内ソートする
 - `src/db/` — Dexie。**行は snake_case で保持**（Supabase と 1:1 同期のため）、`mappers.ts` で core の camelCase ドメイン型へ変換。IndexedDB は boolean をキーにできないため `is_checked` 等はインデックスせずメモリでフィルタ
 - `src/lib/planning.ts` — core (`generateMealPlan` / `aggregateShoppingList`) と Dexie を繋ぐ層。`generateWeek()` が献立を生成し Dexie に保存、`buildShoppingItems()` が買い物リストを集約。**週の「作り直す」は常に `generateWeek`**（現在の曜日テンプレで構造から再生成し、既存プランのロック済みスロットを slotId 一致で引き継ぐ）。スロット/食事の再抽選(US-05): `reshuffleSlot`(必ず別レシピ・代替無ければ現状維持) / `reshuffleMeal`（ロック維持）/ `toggleSlotLock`(US-06)。共通ロジックは `reshuffleSlots`（対象外・ロック済みのレシピを除外して再抽選）。生成・再抽選とも `loadEligibleRecipes()` 経由でレシピを読み、**無効ソース(`is_enabled=false`)のレシピを除外**(US-03)
@@ -107,16 +108,17 @@ pnpm --filter @recipe-planner/web typecheck
 - `src/types/` — 共有ドメイン型（DB は snake_case、ドメイン層は camelCase。変換は永続化層の責務）
 - `src/generation/` — 献立生成。`generateMealPlan()` が入口。`rng.ts`(seeded RNG + softmax) / `scoring.ts`(F-02-2 の重み付け) / `generate.ts`(候補構築→フィルタ→サンプリング→多様性再抽選→制約緩和)。**乱数は注入可能**（テストは `mulberry32` で決定論化）
 - `src/shopping/` — 買い物リスト集約。`aggregateShoppingList()` が入口。`units.ts`(単位分類・換算 §5.3) / `aggregate.ts`(展開→スケール→グルーピング→合算→常備品除外→売場順ソート)
-- `src/normalize/` — 食材名の正規化。`normalizeIngredientName()`(NFKC→ひらがな化→空白除去→小文字化)。手動入力と抽出パイプラインが共有する照合キー生成
+- `src/normalize/` — 食材名の正規化。`name.ts`(`normalizeIngredientName()`: NFKC→ひらがな化→空白除去→小文字化) / `match.ts`(`createIngredientIndex`/`matchIngredientMaster`: 正規化キー＋`aliases` でマスタ照合。行型を持ち込まないため名前取り出し関数 `keysOf` を受ける) / `category.ts`(`classifyIngredient`: 辞書の**最長一致**で売場カテゴリ＋常備品フラグを推定。「冷凍◯◯」は先頭一致で frozen)。手動入力と抽出パイプラインが共有する
 - `src/similarity/` — 文字 3-gram 類似度（§3.4）。`overlapRatio`/`checkSimilarity`、閾値 `SIMILARITY_THRESHOLDS`(私的0.6/公開0.4)。要約が原文表現をなぞっていないかの機械検査
-- `src/extraction/` — レシピ抽出の**共有型・純粋ロジック**（Deno の Edge Function から利用）。`types.ts`(`ExtractionProvider` 抽象/結果型) / `jsonld.ts`(schema.org/Recipe 直接マッピング=Tier0・LLM不要) / `gate.ts`(`applySimilarityGate`: 超過なら再生成最大2回→破棄) / `html.ts`(JSON-LD ブロック抽出・本文テキスト化、DOM非依存) / `youtube.ts`(watch HTML から概要欄`shortDescription`/タイトル抽出。概要欄は`<script>`内で htmlToText では落ちるため専用) / `url.ts`(`validateExternalUrl`: SSRF 判定) / `prompt.ts`(**Gemini responseSchema 互換**の出力スキーマ＋プロンプト)
+- `src/extraction/` — レシピ抽出の**共有型・純粋ロジック**（Deno の Edge Function から利用）。`types.ts`(`ExtractionProvider` 抽象/結果型) / `jsonld.ts`(schema.org/Recipe 直接マッピング=Tier0・LLM不要) / `gate.ts`(`applySimilarityGate`: 超過なら再生成最大2回→破棄) / `html.ts`(JSON-LD ブロック抽出・本文テキスト化、DOM非依存) / `youtube.ts`(watch HTML から概要欄`shortDescription`/タイトル抽出。概要欄は`<script>`内で htmlToText では落ちるため専用) / `url.ts`(`validateExternalUrl`: SSRF 判定) / `source.ts`(`deriveSource`: 原典 URL＋ヒントから収集元を同定。YouTube はチャンネル ID、Web はホスト名が `identifier`) / `prompt.ts`(**Gemini responseSchema 互換**の出力スキーマ＋プロンプト)
 - `src/testing.ts` — テスト専用ファクトリ（`index.ts` からは公開しない）
 - 注意: core の tsconfig は `lib: ["ES2022","WebWorker"]`。`URL`/`fetch` 等の Web 標準グローバルの型のみ入れ、`document`/`window` は含めない（DOM フリー規律を維持）
 
 ### supabase/functions（Deno・抽出パイプライン）
 - `_shared/fetch.ts`(SSRF再検証付き安全fetch: リダイレクト手動追跡・タイムアウト・サイズ上限) / `_shared/pipeline.ts`(取得→JSON-LD高速経路 or LLM抽出→類似度ゲート→原文破棄) / `_shared/providers/`(`gemini.ts` 実装・`mock.ts` キー無しローカル検証用) / `_shared/provider-select.ts`(`GEMINI_API_KEY` があれば Gemini、無ければ Mock) / `ingest/index.ts`(POST /ingest: 即202 + `EdgeRuntime.waitUntil()`)
 - core は `deno.json` の import map で `@recipe-planner/core/extraction` 等を相対 `.ts` にエイリアス
-- **未接続**: Supabase プロジェクト・DB(import_jobs/recipes 挿入)・ingest トークン照合・レート制限・Realtime 通知は `ingest/index.ts` に TODO として明示。Gemini キー投入で実プロバイダに切替
+- `_shared/db.ts`(サービスロールで DB 操作。トークン照合(SHA-256 ハッシュ)・レート制限・`import_jobs`・`recipes`/`recipe_ingredients` 挿入)。挿入時に **`ensureSource`(収集元を同定/作成 → `source_id`)** と **`resolveIngredientIds`(core の索引でマスタ照合、未登録は `classifyIngredient` でカテゴリ推定して作成 → `ingredient_id`)** を通す。ここが埋まらないと買い物リストが全部「その他」に落ちる
+- **未実装**: ingest トークンの発行 UI（現状 DB に直接 INSERT）、10 分以上 `pending` のジョブを再実行する pg_cron
 - **deno 未インストールのため Deno 側は型チェック未実施**。純粋ロジック(SSRF/JSON-LD/ゲート/HTML)は core に置き vitest でカバー済み
 
 ## 実装の優先順位

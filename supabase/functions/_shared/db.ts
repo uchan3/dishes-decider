@@ -7,7 +7,17 @@
  */
 
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
-import type { RecipeExtractionResult, ExtractionMethod } from "@recipe-planner/core/extraction";
+import { deriveSource, type SourceHint } from "@recipe-planner/core/extraction";
+import type {
+  ExtractedIngredient,
+  RecipeExtractionResult,
+  ExtractionMethod,
+} from "@recipe-planner/core/extraction";
+import {
+  classifyIngredient,
+  createIngredientIndex,
+  normalizeIngredientName,
+} from "@recipe-planner/core/normalize";
 
 /** サービスロールのクライアントを生成する。 */
 export function serviceClient(): SupabaseClient {
@@ -78,7 +88,134 @@ export async function createImportJob(
   return data.id as string;
 }
 
-/** 抽出結果を recipes / recipe_ingredients に保存し、ジョブを success/partial に更新。 */
+/** 食材マスタの照合に使う最小の行。 */
+interface IngredientMasterRow {
+  id: string;
+  canonical_name: string;
+  aliases: string[] | null;
+}
+
+/** マスタ 1 件から照合対象の名前（正規名 + 別名）を取り出す。 */
+const masterKeys = (m: IngredientMasterRow): string[] => [m.canonical_name, ...(m.aliases ?? [])];
+
+/**
+ * 原典 URL から収集元を同定し、無ければ作成して `sources.id` を返す（F-01-2 / US-03）。
+ *
+ * 既存ソースの名前は上書きしない（ユーザーが設定画面で付け直した名前を守るため）。
+ * 同定できない・作成に失敗した場合は null を返し、レシピは `source_id` なしで保存する
+ * （取り込み自体は成功させる方が価値が高い）。
+ */
+async function ensureSource(
+  db: SupabaseClient,
+  userId: string,
+  url: string,
+  hint: SourceHint,
+): Promise<string | null> {
+  const derived = deriveSource(url, hint);
+  const find = () =>
+    db
+      .from("sources")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("kind", derived.kind)
+      .eq("identifier", derived.identifier)
+      .maybeSingle();
+
+  const { data: existing } = await find();
+  if (existing) return existing.id as string;
+
+  const { data: inserted, error } = await db
+    .from("sources")
+    .insert({
+      user_id: userId,
+      name: derived.name,
+      kind: derived.kind,
+      identifier: derived.identifier,
+    })
+    .select("id")
+    .single();
+  if (!error && inserted) return inserted.id as string;
+
+  // unique (user_id, kind, identifier) 競合＝並行取り込み。作られた行を取り直す。
+  const { data: retry } = await find();
+  if (retry) return retry.id as string;
+
+  console.log(`[ingest] sources 作成失敗: ${error?.message ?? "unknown"}`);
+  return null;
+}
+
+/**
+ * 抽出された材料を食材マスタに紐付け、`recipe_ingredients.ingredient_id` に入れる値を返す。
+ *
+ * 未登録の食材は {@link classifyIngredient} で売場カテゴリ・常備品を推定して新規作成する。
+ * ここで紐付かないと買い物リストの合算・売場順ソート・常備品除外（F-03-1 / US-10）が
+ * 機能しないため、取り込みパイプラインの中で最も価値の高い処理。
+ *
+ * 失敗しても取り込みは止めず null（未紐付け）で通す。買い物リストは表示名でフォールバック
+ * 集約されるため、値が全く出ないよりは劣化して出る方がよい。
+ *
+ * @returns `ingredients` と同じ並び・同じ長さの ID 配列（紐付かなかった要素は null）
+ */
+async function resolveIngredientIds(
+  db: SupabaseClient,
+  userId: string,
+  ingredients: readonly ExtractedIngredient[],
+): Promise<(string | null)[]> {
+  if (ingredients.length === 0) return [];
+
+  // user_id が null の行はシステム共通マスタ。自分の行と併せて照合対象にする。
+  const { data, error } = await db
+    .from("ingredients")
+    .select("id, canonical_name, aliases")
+    .or(`user_id.eq.${userId},user_id.is.null`);
+  if (error) {
+    console.log(`[ingest] ingredients 取得失敗: ${error.message}`);
+    return ingredients.map(() => null);
+  }
+
+  const index = createIngredientIndex((data ?? []) as IngredientMasterRow[], masterKeys);
+
+  // 未登録の食材を集める（同一レシピ内の重複は正規化キーで 1 つに畳む）。
+  const pending = new Map<string, { name: string; unit: string | null }>();
+  for (const ing of ingredients) {
+    const name = ing.displayName.trim();
+    const key = normalizeIngredientName(name);
+    if (key === "" || pending.has(key) || index.match(name)) continue;
+    pending.set(key, { name, unit: ing.unit });
+  }
+
+  if (pending.size > 0) {
+    const rows = [...pending.values()].map(({ name, unit }) => {
+      const { category, isPantryStaple } = classifyIngredient(name);
+      return {
+        user_id: userId,
+        canonical_name: name,
+        aliases: [],
+        category,
+        default_unit: unit,
+        is_pantry_staple: isPantryStaple,
+        sort_order: 0,
+      };
+    });
+    const { data: created, error: insertErr } = await db
+      .from("ingredients")
+      .insert(rows)
+      .select("id, canonical_name, aliases");
+    if (insertErr) {
+      console.log(`[ingest] ingredients 作成失敗: ${insertErr.message}`);
+    } else {
+      for (const row of (created ?? []) as IngredientMasterRow[]) index.add(row);
+    }
+  }
+
+  return ingredients.map((ing) => index.match(ing.displayName.trim())?.id ?? null);
+}
+
+/**
+ * 抽出結果を recipes / recipe_ingredients に保存し、ジョブを success/partial に更新。
+ *
+ * 併せて収集元（sources）の同定・食材マスタ（ingredients）への紐付けも行う。
+ */
 export async function persistExtraction(
   db: SupabaseClient,
   userId: string,
@@ -86,14 +223,21 @@ export async function persistExtraction(
   sourceUrl: string,
   method: ExtractionMethod,
   result: RecipeExtractionResult,
+  sourceHint: SourceHint = {},
 ): Promise<string> {
   const hasAllSteps = result.steps.every((s) => s.summary !== null);
   const status = result.ingredients.length > 0 && hasAllSteps ? "success" : "partial";
+
+  const [sourceId, ingredientIds] = await Promise.all([
+    ensureSource(db, userId, sourceUrl, sourceHint),
+    resolveIngredientIds(db, userId, result.ingredients),
+  ]);
 
   const { data: recipe, error: recipeErr } = await db
     .from("recipes")
     .insert({
       user_id: userId,
+      source_id: sourceId,
       title: result.title,
       source_url: sourceUrl,
       step_summaries: result.steps.map((s) => ({
@@ -120,6 +264,7 @@ export async function persistExtraction(
     const { error: ingErr } = await db.from("recipe_ingredients").insert(
       result.ingredients.map((ing, i) => ({
         recipe_id: recipeId,
+        ingredient_id: ingredientIds[i] ?? null,
         raw_text: ing.rawText,
         display_name: ing.displayName,
         quantity: ing.quantity,
