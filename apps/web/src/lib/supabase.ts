@@ -22,7 +22,8 @@ export const isSupabaseConfigured = Boolean(url && publishableKey);
  * （実際の呼び出しは `isSupabaseConfigured` を確認してから行う）。
  */
 export const supabase: SupabaseClient = createClient(
-  url ?? "https://placeholder.supabase.co",
-  publishableKey ?? "placeholder-key",
+  // 空文字の環境変数でも createClient が例外を投げないよう `||` で拾う（?? では素通りする）。
+  url || "https://placeholder.supabase.co",
+  publishableKey || "placeholder-key",
   { auth: { persistSession: true, autoRefreshToken: true } },
 );
