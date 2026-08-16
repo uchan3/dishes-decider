@@ -102,9 +102,12 @@ pnpm --filter @recipe-planner/web typecheck
 - `src/lib/cooking.ts` — 調理の記録。献立スロットの `cooked_at`（Dexie のみ・非インデックス列）で「作った」を持ち、レシピの `cook_count`/`last_cooked_at` を `updateRecipe` 経由で更新（Supabase にも反映）。**これが無いとクールダウンと novelty が初期値のまま効かない**(US-12)。取り消しは `deriveLastCookedAt`（全プランの記録から最新日を導出する純粋関数）で戻すため、押し間違いを繰り返しても値がずれない。調理済みスロットは再抽選・作り直しの対象外（記録が別レシピを指さないように）
 - `src/lib/shopping.ts` — 買い物リストの永続化(US-09)。`syncShoppingList()` が集約結果を `shoppingItems` に保存し、`reconcileShoppingItems()`（純粋関数・テスト有り）が**既存項目の id とチェック状態を引き継ぐ**（同一性キーは `ingredient_id ?? name:正規化表示名`）。献立から消えた項目は削除、`is_manual` の項目は常に残す。**常備品も含めて保存し表示側でフィルタする**（トグルで行を作り直すとチェックが消えるため）。`setItemChecked` / `clearChecked` / `pantryIngredientIds`
 - 曜日ごとの献立構成(US-07): `lib/mealTemplates.ts`（プリセット6種＋月起点の週割り当て）＋ `lib/settings.ts`（Dexie の `settings` KVストア。schema **v2** で追加）。設定画面で曜日別にテンプレ選択。`eat_out`(空スロット) の日は `is_skipped` の Meal になり生成対象外
+- 生成設定(F-02-1): `lib/settings.ts` の `PlanningSettings`（世帯人数・クールダウン日数・平日/休日の調理時間上限）。既定は仕様表どおり **平日 30 分・休日制限なし・クールダウン 14 日**。保存・読み込みは必ず `normalizePlanningSettings`（純粋関数・テスト有り）を通し、壊れた値が生成ロジックに流れないようにする。`generateWeek`/再抽選が core の `settings` に写して渡し、買い物リストの人数スケーリングにも使う
+- 常備品(US-10): 設定画面の食材マスタ一覧でトグル（`setPantryStaple`）。買い物リストは常備品も保存しつつ既定で非表示にする
 - `src/db/seed.ts` — 開発用サンプルデータ（抽出パイプライン未実装のため。設定画面から投入）
 - **Supabase 連携（レシピライブラリのみ）**: `lib/supabase.ts`(クライアント・`VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY`) / `lib/auth.tsx`(メール＋パスワード認証コンテキスト) / `AppGate.tsx`(未認証はログイン画面、認証時に同期起動) / `lib/sync.ts`(`pullLibrary`: recipes/sources/ingredients を Supabase→Dexie に一方向プル、`subscribeImports`: import_jobs の Realtime で取り込み完了時に再プル)。**UI は常に Dexie から読む**（Supabase は同期元）。env 未設定ならログインを出さずローカル Dexie のみで動作
-- **献立・買い物リストの双方向同期（outbox → Supabase）は未実装**。手動レシピ登録も現状 Dexie のみ（Supabase 書き込みは後続）
+- **書き戻し（Dexie → Supabase）**: レシピ編集/削除 (`lib/recipeEdit.ts`)・ソースの有効無効 (`lib/sources.ts`)・常備品フラグ (`lib/ingredients.ts` の `setPantryStaple`)・手動レシピ登録 (`lib/recipeForm.ts`) は **Supabase に書いてから Dexie に書く**（失敗時は Dexie にも書かず食い違いを作らない）。`lib/ids.ts` の `isUuid` で「Supabase に存在しない行（開発用シード等）」をガードする。手動レシピのソースは `ensureManualSource` が Supabase の `(manual, manual)` 行を正とし、その UUID を Dexie の ID にも使う
+- **献立・買い物リストの双方向同期（outbox → Supabase）は未実装**（Dexie ローカルのまま）。オフライン時は上記の書き戻しが失敗して操作自体が止まる。ここを「ローカルに書いて後で送る」にするのが outbox の作業
 
 ### packages/core の構成
 - `src/types/` — 共有ドメイン型（DB は snake_case、ドメイン層は camelCase。変換は永続化層の責務）

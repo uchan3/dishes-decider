@@ -17,7 +17,20 @@ import { db, type MealPlanRow, type MealRow, type PlanSlotRow } from "../db/sche
 import { toIngredient, toRecipe, toRecipeIngredient } from "../db/mappers.ts";
 import { addDays, isWeekend, today } from "./date.ts";
 import { mondayIndex, templateById, type TemplateId, type WeekdayTemplates } from "./mealTemplates.ts";
-import { loadWeekdayTemplates } from "./settings.ts";
+import {
+  loadPlanningSettings,
+  loadWeekdayTemplates,
+  type PlanningSettings,
+} from "./settings.ts";
+
+/** ユーザー設定を core の生成設定（部分指定）に写す。 */
+function generationSettings(settings: PlanningSettings) {
+  return {
+    cooldownDays: settings.cooldownDays,
+    weekdayMaxCookMin: settings.weekdayMaxCookMin,
+    weekendMaxCookMin: settings.weekendMaxCookMin,
+  };
+}
 
 /**
  * 献立生成の対象レシピを読み込む。無効化されたソース（`is_enabled=false`）に属する
@@ -77,9 +90,10 @@ export interface GeneratedWeek {
  * @returns 生成された献立と緩和情報
  */
 export async function generateWeek(startDate: string): Promise<GeneratedWeek> {
-  const [recipes, weekday, existing] = await Promise.all([
+  const [recipes, weekday, settings, existing] = await Promise.all([
     loadEligibleRecipes(),
     loadWeekdayTemplates(),
+    loadPlanningSettings(),
     db.mealPlans.get(`plan-${startDate}`),
   ]);
   const days = buildWeekPlan(startDate, weekday);
@@ -104,6 +118,7 @@ export async function generateWeek(startDate: string): Promise<GeneratedWeek> {
     ),
     recipes,
     referenceDate: today(),
+    settings: generationSettings(settings),
     rng: Math.random, // UI では再生成のたびに変化させる
   });
 
@@ -201,7 +216,7 @@ async function reshuffleSlots(
     if (forceChange && slot.recipe_id) excluded.add(slot.recipe_id);
   }
 
-  const recipes = await loadEligibleRecipes();
+  const [recipes, settings] = await Promise.all([loadEligibleRecipes(), loadPlanningSettings()]);
   const result = generateMealPlan({
     slots: regen.map(({ slot, date }) => ({
       slotId: slot.id,
@@ -210,6 +225,7 @@ async function reshuffleSlots(
     })),
     recipes,
     referenceDate: today(),
+    settings: generationSettings(settings),
     excludeRecipeIds: [...excluded],
     rng: Math.random,
   });
