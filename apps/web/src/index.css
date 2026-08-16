@@ -562,6 +562,31 @@ a {
   margin-bottom: 6px;
 }
 
+.detail__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.title-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.title-edit__input {
+  font: inherit;
+  font-size: 1.2rem;
+  font-weight: 700;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  width: 100%;
+}
+
 .detail__meta {
   display: flex;
   gap: 8px;
