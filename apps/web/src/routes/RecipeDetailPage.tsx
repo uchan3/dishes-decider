@@ -35,13 +35,17 @@ export function RecipeDetailPage() {
     [recipe?.source_id],
   );
 
-  // タグ編集はレシピが切り替わったときだけ初期化する（入力中の値を保持）。
+  // 編集フィールドはレシピが切り替わったときだけ初期化する（入力中の値を保持）。
   const [tagsText, setTagsText] = useState("");
   const [tagsDirty, setTagsDirty] = useState(false);
+  const [titleText, setTitleText] = useState("");
+  const [editingTitle, setEditingTitle] = useState(false);
   useEffect(() => {
     if (recipe) {
       setTagsText(recipe.tags.join(", "));
       setTagsDirty(false);
+      setTitleText(recipe.title);
+      setEditingTitle(false);
     }
   }, [recipe?.id]);
 
@@ -80,12 +84,57 @@ export function RecipeDetailPage() {
     setTagsDirty(false);
   }
 
+  async function saveTitle() {
+    const t = titleText.trim();
+    if (t === "" || t === recipe?.title) {
+      setEditingTitle(false);
+      return;
+    }
+    await updateRecipe(id, { title: t });
+    setEditingTitle(false);
+  }
+
   return (
     <section className="detail">
       <Link to="/library" className="back-link">← レシピ一覧</Link>
 
       <header className="detail__head">
-        <h1>{recipe.title}</h1>
+        {editingTitle ? (
+          <div className="title-edit">
+            <input
+              className="title-edit__input"
+              value={titleText}
+              onChange={(e) => setTitleText(e.target.value)}
+              placeholder="料理名"
+              autoFocus
+            />
+            <div className="btn-row">
+              <button className="btn btn--primary" onClick={saveTitle}>
+                保存
+              </button>
+              <button
+                className="btn"
+                onClick={() => {
+                  setTitleText(recipe.title);
+                  setEditingTitle(false);
+                }}
+              >
+                キャンセル
+              </button>
+            </div>
+          </div>
+        ) : (
+          <h1 className="detail__title">
+            {recipe.title}
+            <button
+              className="icon-btn"
+              title="タイトルを編集"
+              onClick={() => setEditingTitle(true)}
+            >
+              ✏️
+            </button>
+          </h1>
+        )}
         <div className="detail__meta">
           {recipe.dish_roles.map((r) => (
             <span key={r} className="tag">{ROLE_LABEL[r] ?? r}</span>
