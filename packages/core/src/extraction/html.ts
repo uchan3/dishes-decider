@@ -22,6 +22,22 @@ export function extractJsonLdBlocks(html: string): string[] {
   return blocks;
 }
 
+/**
+ * `<meta property="og:site_name">` からサイト名を返す。無ければ null。
+ *
+ * 収集元の表示名（F-01-2）に使う。ホスト名より読みやすい名前が取れる場合の補足であり、
+ * 収集元の同定（identifier）はホスト名で行う。
+ */
+export function extractSiteName(html: string): string | null {
+  const re =
+    /<meta\b[^>]*?(?:property|name)=["']og:site_name["'][^>]*?content=["']([^"']*)["']/i;
+  const reversed =
+    /<meta\b[^>]*?content=["']([^"']*)["'][^>]*?(?:property|name)=["']og:site_name["']/i;
+  const m = re.exec(html) ?? reversed.exec(html);
+  const value = m?.[1]?.trim();
+  return value ? decodeEntities(value) : null;
+}
+
 /** HTML エンティティの最小デコード（本文抽出に十分な範囲）。 */
 function decodeEntities(text: string): string {
   return text

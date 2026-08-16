@@ -11,6 +11,7 @@ import {
 import { loadWeekdayTemplates, saveWeekdayTemplates } from "../lib/settings.ts";
 import { useAuth } from "../lib/auth.tsx";
 import { pullLibrary } from "../lib/sync.ts";
+import { relinkIngredients } from "../lib/relink.ts";
 
 const KIND_LABEL: Record<string, string> = {
   youtube: "YouTube",
@@ -34,7 +35,13 @@ export function SettingsPage() {
   }, []);
 
   const weekdayTemplates = useLiveQuery(() => loadWeekdayTemplates(), []);
-  const { configured, session, signOut } = useAuth();
+  const { configured, session, userId, signOut } = useAuth();
+
+  /** 食材マスタに紐付いていない材料の数（再照合の要否を示す）。 */
+  const unlinkedCount = useLiveQuery(async () => {
+    const lines = await db.recipeIngredients.toArray();
+    return lines.filter((l) => l.ingredient_id === null).length;
+  }, []);
 
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -46,6 +53,23 @@ export function SettingsPage() {
       setMessage(`同期しました（レシピ ${n} 件）。`);
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "同期に失敗しました");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRelink() {
+    setBusy(true);
+    try {
+      const r = await relinkIngredients(userId);
+      setMessage(
+        r.scanned === 0
+          ? "未紐付けの材料はありませんでした。"
+          : `${r.linked} 件の材料を紐付けました（新規食材 ${r.created} 件` +
+            `${r.synced ? "・Supabase にも反映" : ""}）。`,
+      );
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "再照合に失敗しました");
     } finally {
       setBusy(false);
     }
@@ -168,6 +192,27 @@ export function SettingsPage() {
             ))}
           </ul>
         )}
+      </div>
+
+      <div className="card">
+        <h2>食材マスタ</h2>
+        <p className="muted">
+          材料が食材マスタに紐付いていないと、買い物リストの売場分類と常備品の除外が働きません。
+          {unlinkedCount === undefined
+            ? ""
+            : unlinkedCount === 0
+              ? " 現在、未紐付けの材料はありません。"
+              : ` 未紐付けの材料が ${unlinkedCount} 件あります。`}
+        </p>
+        <div className="btn-row">
+          <button
+            onClick={handleRelink}
+            disabled={busy || unlinkedCount === 0}
+            className="btn btn--primary"
+          >
+            食材マスタに再照合
+          </button>
+        </div>
       </div>
 
       <div className="card">

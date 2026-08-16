@@ -11,6 +11,7 @@ import {
   applySimilarityGate,
   extractJsonLdBlocks,
   extractRecipeFromJsonLd,
+  extractSiteName,
   extractYouTubeContent,
   htmlToText,
   isYouTubeUrl,
@@ -19,6 +20,7 @@ import {
   type ExtractionMethod,
   type ExtractionProvider,
   type RecipeExtractionResult,
+  type SourceHint,
 } from "@recipe-planner/core/extraction";
 import { safeFetch } from "./fetch.ts";
 import { fetchYouTubeSnippet } from "./youtube-api.ts";
@@ -28,6 +30,11 @@ export interface PipelineResult {
   result: RecipeExtractionResult;
   method: ExtractionMethod;
   finalUrl: string;
+  /**
+   * 収集元の補足情報（YouTube チャンネル・サイト名）。`deriveSource` に渡して
+   * `sources` を同定するために使う（F-01-2 / US-03）。
+   */
+  sourceHint: SourceHint;
 }
 
 /** パイプライン設定。 */
@@ -82,7 +89,10 @@ async function maybeExtractYouTube(
   }
   console.log(`[pipeline] youtube-api: videoId=${videoId} descLen=${snippet.description.length}`);
   const text = `タイトル: ${snippet.title}\n\n${snippet.description}`;
-  return llmExtract(url, text, snippet.title, options);
+  return llmExtract(url, text, snippet.title, options, {
+    channelId: snippet.channelId,
+    channelTitle: snippet.channelTitle,
+  });
 }
 
 /**
@@ -111,6 +121,9 @@ export async function extractFromContent(
   if (yt) return yt;
 
   const threshold = options.threshold ?? SIMILARITY_THRESHOLDS.private;
+  // 収集元の表示名に使う（識別子はホスト名なので、取れなくても同定はできる）。
+  const sourceHint: SourceHint =
+    kind === "html" ? { siteName: extractSiteName(content) } : {};
 
   // Tier 0: HTML なら JSON-LD 直接マッピングを試す。
   if (kind === "html") {
@@ -126,6 +139,7 @@ export async function extractFromContent(
         result: { ...jsonLd.result, steps: gatedSteps },
         method: "jsonld",
         finalUrl: url,
+        sourceHint,
       };
     }
   }
@@ -142,7 +156,7 @@ export async function extractFromContent(
   } else {
     text = kind === "html" ? htmlToText(content) : content;
   }
-  return llmExtract(url, text, titleHint, options);
+  return llmExtract(url, text, titleHint, options, sourceHint);
 }
 
 /**
@@ -156,6 +170,7 @@ async function llmExtract(
   text: string,
   titleHint: string | null,
   options: PipelineOptions,
+  sourceHint: SourceHint = {},
 ): Promise<PipelineResult> {
   const threshold = options.threshold ?? SIMILARITY_THRESHOLDS.private;
   const extraction = await options.provider.extract({ url, text, titleHint });
@@ -172,6 +187,7 @@ async function llmExtract(
     result: { ...extraction.result, steps: gatedSteps },
     method: "llm_text",
     finalUrl: url,
+    sourceHint,
   };
 }
 

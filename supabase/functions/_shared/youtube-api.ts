@@ -11,6 +11,10 @@
 export interface YouTubeSnippet {
   title: string;
   description: string;
+  /** 投稿チャンネルの ID。収集元（sources）の識別子に使う。 */
+  channelId: string | null;
+  /** 投稿チャンネル名。収集元の表示名に使う。 */
+  channelTitle: string | null;
 }
 
 /**
@@ -31,12 +35,21 @@ export async function fetchYouTubeSnippet(
     throw new Error(`YouTube API エラー: HTTP ${res.status} ${await res.text()}`);
   }
   const data = (await res.json()) as {
-    items?: { snippet?: { title?: string; description?: string } }[];
+    items?: {
+      snippet?: {
+        title?: string;
+        description?: string;
+        channelId?: string;
+        channelTitle?: string;
+      };
+    }[];
   };
   const snippet = data.items?.[0]?.snippet;
   if (!snippet) return null;
   return {
     title: snippet.title ?? "",
     description: snippet.description ?? "",
+    channelId: snippet.channelId ?? null,
+    channelTitle: snippet.channelTitle ?? null,
   };
 }

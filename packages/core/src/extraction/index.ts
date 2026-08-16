@@ -15,7 +15,7 @@ export {
   parseServings,
 } from "./jsonld.ts";
 export { applySimilarityGate, type RegenerateStep, type GateOptions } from "./gate.ts";
-export { extractJsonLdBlocks, htmlToText } from "./html.ts";
+export { extractJsonLdBlocks, extractSiteName, htmlToText } from "./html.ts";
 export {
   isYouTubeUrl,
   youtubeVideoId,
@@ -24,6 +24,12 @@ export {
   extractYouTubeContent,
   type YouTubeContent,
 } from "./youtube.ts";
+export {
+  deriveSource,
+  type DerivedSource,
+  type SourceHint,
+  type SourceKind,
+} from "./source.ts";
 export {
   validateExternalUrl,
   isInternalHost,

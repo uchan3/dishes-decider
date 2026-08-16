@@ -1,12 +1,20 @@
 /**
- * 食材名から既存マスタを照合するヘルパー。
+ * 食材マスタ照合の Dexie 向けアダプタ。
  *
- * core の {@link normalizeIngredientName} で正規化キーを作り、canonical_name と
- * aliases の両方に対して突き合わせる。漢字の揺れは辞書（aliases）で吸収する前提。
+ * 照合ロジック本体は core の {@link createIngredientIndex}（正規化キー + 別名）にあり、
+ * 取り込みパイプライン（supabase/functions）と共有している。ここは Dexie の
+ * snake_case 行から照合対象の名前を取り出すだけの薄い層。
  */
 
-import { normalizeIngredientName } from "@recipe-planner/core";
+import {
+  createIngredientIndex,
+  matchIngredientMaster,
+  type IngredientIndex,
+} from "@recipe-planner/core";
 import type { IngredientRow } from "../db/schema.ts";
+
+/** マスタ行から照合対象の名前（正規名 + 別名）を取り出す。 */
+const keysOf = (m: IngredientRow): string[] => [m.canonical_name, ...m.aliases];
 
 /**
  * 正規化名で一致する食材マスタを探す。
@@ -19,11 +27,15 @@ export function matchMaster(
   name: string,
   masters: readonly IngredientRow[],
 ): IngredientRow | undefined {
-  const key = normalizeIngredientName(name);
-  if (key === "") return undefined;
-  return masters.find(
-    (m) =>
-      normalizeIngredientName(m.canonical_name) === key ||
-      m.aliases.some((a) => normalizeIngredientName(a) === key),
-  );
+  return matchIngredientMaster(name, masters, keysOf);
+}
+
+/**
+ * 食材マスタの索引を作る。連続して照合する場合（フォームの全材料など）はこちらを使う。
+ * 新規作成したマスタを `add` で足せば、同じ入力内の重複を 1 つのマスタに収束できる。
+ */
+export function ingredientIndex(
+  masters: readonly IngredientRow[],
+): IngredientIndex<IngredientRow> {
+  return createIngredientIndex(masters, keysOf);
 }

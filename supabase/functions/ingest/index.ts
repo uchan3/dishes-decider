@@ -10,7 +10,8 @@
  *     行わない）。Cloudflare 等の Bot 対策サイトや YouTube 概要欄はこちらを使う。
  *
  * フロー: トークン照合 → レート制限 → import_jobs(pending) → 202 →
- *   （背景）抽出→類似度ゲート→recipes 挿入→job 更新。結果は Realtime で PWA に届く。
+ *   （背景）抽出 → 類似度ゲート → 収集元の同定・食材マスタ紐付け → recipes 挿入 →
+ *   job 更新。結果は Realtime で PWA に届く。
  */
 
 import { validateExternalUrl } from "@recipe-planner/core/extraction";
@@ -107,10 +108,10 @@ Deno.serve(async (req: Request) => {
       try {
         const provider = selectProvider();
         // content があれば端末取得の本文から抽出（fetch しない）、無ければサーバー fetch。
-        const { result, method, finalUrl } = content
+        const { result, method, finalUrl, sourceHint } = content
           ? await extractFromContent(url, content, contentKind, { provider })
           : await runExtraction(url, { provider });
-        await persistExtraction(db, userId, jobId, finalUrl, method, result);
+        await persistExtraction(db, userId, jobId, finalUrl, method, result, sourceHint);
       } catch (err) {
         await failJob(db, jobId, err instanceof Error ? err.message : String(err));
       }
