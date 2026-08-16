@@ -21,6 +21,7 @@ import { useAuth } from "../lib/auth.tsx";
 import { pullLibrary } from "../lib/sync.ts";
 import { relinkIngredients } from "../lib/relink.ts";
 import { setSourceEnabled } from "../lib/sources.ts";
+import { IngestCard } from "../components/IngestCard.tsx";
 
 /** 売場カテゴリの並び順とラベル（買い物リストの導線順に合わせる）。 */
 const CATEGORY_ORDER: IngredientCategory[] = [
@@ -192,6 +193,8 @@ export function SettingsPage() {
           </p>
         </div>
       )}
+
+      {configured && userId && <IngestCard userId={userId} />}
 
       <div className="card">
         <h2>献立の生成設定</h2>

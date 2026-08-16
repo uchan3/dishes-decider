@@ -18,6 +18,7 @@ import {
   createIngredientIndex,
   normalizeIngredientName,
 } from "@recipe-planner/core/normalize";
+import { hashIngestToken } from "@recipe-planner/core/tokens";
 
 /** サービスロールのクライアントを生成する。 */
 export function serviceClient(): SupabaseClient {
@@ -27,12 +28,11 @@ export function serviceClient(): SupabaseClient {
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
-/** 生トークンを SHA-256 の16進ハッシュに変換する（保存・照合はハッシュで）。 */
-export async function hashToken(rawToken: string): Promise<string> {
-  const data = new TextEncoder().encode(rawToken);
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
+/**
+ * 生トークンを SHA-256 の16進ハッシュに変換する（保存・照合はハッシュで）。
+ * 発行側（PWA）と同じ実装を使うため core から再エクスポートする。
+ */
+export const hashToken = hashIngestToken;
 
 /** ingest トークンを検証し user_id を返す。無効・失効なら null。 */
 export async function resolveIngestToken(
