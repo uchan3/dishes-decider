@@ -234,6 +234,12 @@ a {
   padding: 2px 4px;
 }
 
+/* 作った記録が付いたスロット（US-12 のクールダウンに反映済み）。 */
+.slot--cooked .slot__recipe {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
 .slot__role {
   font-size: 0.75rem;
   color: var(--muted);

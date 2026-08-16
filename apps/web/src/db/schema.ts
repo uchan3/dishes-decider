@@ -101,6 +101,12 @@ export interface PlanSlotRow {
   recipe_id: string | null;
   is_locked: boolean;
   position: number;
+  /**
+   * 実際に作った日 (YYYY-MM-DD)。未調理なら null。
+   * この列を足す前に保存されたスロットには存在しないため、読むときは `?? null` で扱う
+   * （非インデックス列なので Dexie のバージョン更新は不要）。
+   */
+  cooked_at?: string | null;
 }
 
 /** 買い物リスト項目。 */
