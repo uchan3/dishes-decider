@@ -12,6 +12,7 @@ import { loadWeekdayTemplates, saveWeekdayTemplates } from "../lib/settings.ts";
 import { useAuth } from "../lib/auth.tsx";
 import { pullLibrary } from "../lib/sync.ts";
 import { relinkIngredients } from "../lib/relink.ts";
+import { setSourceEnabled } from "../lib/sources.ts";
 
 const KIND_LABEL: Record<string, string> = {
   youtube: "YouTube",
@@ -110,7 +111,10 @@ export function SettingsPage() {
   }
 
   function toggleSource(id: string, next: boolean) {
-    void db.sources.update(id, { is_enabled: next });
+    // Dexie だけ更新すると次回の同期で巻き戻るため、Supabase にも書く。
+    void setSourceEnabled(id, next).catch((e: unknown) => {
+      setMessage(e instanceof Error ? e.message : "ソースの更新に失敗しました");
+    });
   }
 
   return (

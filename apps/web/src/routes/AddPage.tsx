@@ -8,6 +8,7 @@ import type {
   IngredientCategory,
 } from "@recipe-planner/core";
 import { db } from "../db/schema.ts";
+import { useAuth } from "../lib/auth.tsx";
 import { matchMaster } from "../lib/ingredients.ts";
 import {
   saveManualRecipe,
@@ -68,6 +69,7 @@ const emptyIngredient = (): FormIngredient => ({
 /** レシピ手動登録画面（US-02）。 */
 export function AddPage() {
   const navigate = useNavigate();
+  const { userId } = useAuth();
   const masters = useLiveQuery(() => db.ingredients.toArray(), [], []);
 
   const [title, setTitle] = useState("");
@@ -152,8 +154,11 @@ export function AddPage() {
     setErrors([]);
     setSaving(true);
     try {
-      await saveManualRecipe(formData);
+      await saveManualRecipe(formData, userId);
       navigate("/library");
+    } catch (err) {
+      // Supabase への保存に失敗した場合はここに来る（Dexie にも書いていない）。
+      setErrors([err instanceof Error ? err.message : "保存に失敗しました"]);
     } finally {
       setSaving(false);
     }
