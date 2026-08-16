@@ -9,6 +9,7 @@ import {
   reshuffleSlot,
   toggleSlotLock,
 } from "../lib/planning.ts";
+import { isSlotCooked, setSlotCooked } from "../lib/cooking.ts";
 
 const ROLE_LABEL: Record<string, string> = {
   main: "主菜",
@@ -85,6 +86,14 @@ export function HomePage() {
     });
   }
 
+  /** 「作った」を記録／取り消しする。レシピの調理回数・最終調理日に反映される。 */
+  function handleCooked(slotId: string, cooked: boolean) {
+    if (!plan) return;
+    void run(async () => {
+      await setSlotCooked(plan, slotId, cooked);
+    });
+  }
+
   if (recipeCount === -1) return <p className="muted">読み込み中…</p>;
 
   if (recipeCount === 0) {
@@ -149,8 +158,13 @@ export function HomePage() {
                   <p className="slot-list slot--skipped muted">外食・作らない</p>
                 ) : (
                 <ul className="slot-list">
-                  {meal.slots.map((slot) => (
-                    <li key={slot.id} className={slot.is_locked ? "slot slot--locked" : "slot"}>
+                  {meal.slots.map((slot) => {
+                    const cooked = isSlotCooked(slot.cooked_at);
+                    const classes = ["slot"];
+                    if (slot.is_locked) classes.push("slot--locked");
+                    if (cooked) classes.push("slot--cooked");
+                    return (
+                    <li key={slot.id} className={classes.join(" ")}>
                       <span className="slot__role">{ROLE_LABEL[slot.dish_role] ?? slot.dish_role}</span>
                       <span className="slot__recipe">
                         {slot.recipe_id ? (
@@ -163,6 +177,14 @@ export function HomePage() {
                       </span>
                       <span className="slot__actions">
                         <button
+                          className={cooked ? "icon-btn icon-btn--on" : "icon-btn"}
+                          title={cooked ? "作った記録を取り消す" : "作った"}
+                          disabled={busy || slot.recipe_id === null}
+                          onClick={() => handleCooked(slot.id, !cooked)}
+                        >
+                          {cooked ? "✅" : "🍳"}
+                        </button>
+                        <button
                           className={slot.is_locked ? "icon-btn icon-btn--on" : "icon-btn"}
                           title={slot.is_locked ? "ロック解除" : "ロック"}
                           disabled={busy}
@@ -172,15 +194,16 @@ export function HomePage() {
                         </button>
                         <button
                           className="icon-btn"
-                          title="別のレシピにする"
-                          disabled={busy || slot.is_locked}
+                          title={cooked ? "作った料理は変更できません" : "別のレシピにする"}
+                          disabled={busy || slot.is_locked || cooked}
                           onClick={() => handleSlot(slot.id)}
                         >
                           ↻
                         </button>
                       </span>
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
                 )}
               </article>

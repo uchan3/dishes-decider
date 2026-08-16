@@ -84,20 +84,21 @@ export async function generateWeek(startDate: string): Promise<GeneratedWeek> {
   ]);
   const days = buildWeekPlan(startDate, weekday);
 
-  // 既存プランのロック済みスロット（slotId → recipeId）を引き継ぐ。
-  // slotId は `date#role#index` なので、同じ構成が残るスロットのロックだけが維持される。
-  const lockedRecipeBySlot = new Map<string, string | null>();
+  // 既存プランの「動かしてはいけないスロット」を引き継ぐ: ロック済み(US-06)と、
+  // 既に作ったスロット（作った記録が別のレシピを指してしまうため）。
+  // slotId は `date#role#index` なので、同じ構成が残るスロットだけが維持される。
+  const carried = new Map<string, PlanSlotRow>();
   for (const meal of existing?.meals ?? []) {
     for (const slot of meal.slots) {
-      if (slot.is_locked) lockedRecipeBySlot.set(slot.id, slot.recipe_id);
+      if (slot.is_locked || slot.cooked_at) carried.set(slot.id, slot);
     }
   }
 
   const result = generateMealPlan({
     slots: days.flatMap((d) =>
       d.slots.map((s) =>
-        lockedRecipeBySlot.has(s.slotId)
-          ? { ...s, lockedRecipeId: lockedRecipeBySlot.get(s.slotId) ?? null }
+        carried.has(s.slotId)
+          ? { ...s, lockedRecipeId: carried.get(s.slotId)?.recipe_id ?? null }
           : s,
       ),
     ),
@@ -115,13 +116,17 @@ export async function generateWeek(startDate: string): Promise<GeneratedWeek> {
     meal_type: "dinner",
     template_id: day.templateId,
     is_skipped: day.templateId === "eat_out",
-    slots: day.slots.map((slot, idx) => ({
-      id: slot.slotId,
-      dish_role: slot.dishRole,
-      recipe_id: bySlot.get(slot.slotId)?.recipeId ?? null,
-      is_locked: lockedRecipeBySlot.has(slot.slotId),
-      position: idx,
-    })),
+    slots: day.slots.map((slot, idx) => {
+      const prev = carried.get(slot.slotId);
+      return {
+        id: slot.slotId,
+        dish_role: slot.dishRole,
+        recipe_id: bySlot.get(slot.slotId)?.recipeId ?? null,
+        is_locked: prev?.is_locked ?? false,
+        position: idx,
+        cooked_at: prev?.cooked_at ?? null,
+      };
+    }),
   }));
 
   const nowIso = new Date().toISOString();
@@ -161,8 +166,8 @@ function flattenSlots(plan: MealPlanRow): { slot: PlanSlotRow; date: string }[] 
 /**
  * プランの一部スロットを再抽選する汎用ロジック（F-02-3）。
  *
- * ロックされたスロットは対象から除外して固定する。対象外スロットに割り当て済みの
- * レシピは候補から除外し、週内の重複を避ける。
+ * ロックされたスロットと既に作ったスロットは対象から除外して固定する。対象外スロットに
+ * 割り当て済みのレシピは候補から除外し、週内の重複を避ける。
  *
  * @param plan - 対象プラン（破壊しない。更新済みのクローンを返す）
  * @param targetSlotIds - 再抽選したいスロット ID
@@ -178,8 +183,10 @@ async function reshuffleSlots(
   const all = flattenSlots(next);
   const targets = new Set(targetSlotIds);
 
-  // ロック済みは再抽選しない。
-  const regen = all.filter(({ slot }) => targets.has(slot.id) && !slot.is_locked);
+  // ロック済みと調理済みは再抽選しない（作った記録が別のレシピを指さないように）。
+  const regen = all.filter(
+    ({ slot }) => targets.has(slot.id) && !slot.is_locked && !slot.cooked_at,
+  );
   const regenIds = new Set(regen.map(({ slot }) => slot.id));
 
   // 対象外スロットのレシピは固定 → 候補から除外して重複を防ぐ。
