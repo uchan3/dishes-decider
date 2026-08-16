@@ -2,16 +2,17 @@
 
 import { db, type RecipeRow } from "../db/schema.ts";
 import { supabase, isSupabaseConfigured } from "./supabase.ts";
+import { isUuid } from "./ids.ts";
 
 /**
  * レシピを部分更新する。Supabase 設定時は Supabase も更新し、次回同期での巻き戻りを防ぐ。
- * ローカルのみのレシピ（未同期）は Supabase 側 0 件更新の no-op になる。
+ * ID が UUID でない行（開発用シードなど Supabase に存在しない行）は Dexie のみ更新する。
  */
 export async function updateRecipe(
   id: string,
   patch: Partial<RecipeRow>,
 ): Promise<void> {
-  if (isSupabaseConfigured) {
+  if (isSupabaseConfigured && isUuid(id)) {
     const { error } = await supabase.from("recipes").update(patch).eq("id", id);
     if (error) throw new Error(`更新に失敗しました: ${error.message}`);
   }
@@ -23,7 +24,7 @@ export async function updateRecipe(
  * SET NULL）と Dexie の両方から消す。Dexie だけ消すと次回プルで復活するため。
  */
 export async function deleteRecipe(id: string): Promise<void> {
-  if (isSupabaseConfigured) {
+  if (isSupabaseConfigured && isUuid(id)) {
     const { error } = await supabase.from("recipes").delete().eq("id", id);
     if (error) throw new Error(`削除に失敗しました: ${error.message}`);
   }

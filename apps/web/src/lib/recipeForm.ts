@@ -16,9 +16,11 @@ import {
   type IngredientRow,
   type RecipeIngredientRow,
   type RecipeRow,
-  type SourceRow,
 } from "../db/schema.ts";
 import { ingredientIndex } from "./ingredients.ts";
+import { ensureManualSource } from "./sources.ts";
+import { supabase, isSupabaseConfigured } from "./supabase.ts";
+import { newId } from "./ids.ts";
 
 /** フォームの 1 材料行。 */
 export interface RecipeFormIngredient {
@@ -44,17 +46,6 @@ export interface RecipeFormData {
   ingredients: RecipeFormIngredient[];
 }
 
-/** 手動登録レシピが属する擬似ソース。 */
-const MANUAL_SOURCE: SourceRow = {
-  id: "src-manual",
-  name: "手動入力",
-  kind: "manual",
-  identifier: "manual",
-  icon_url: null,
-  is_enabled: true,
-  created_at: "",
-};
-
 /** 入力の妥当性を検証し、問題があればメッセージ配列を返す（空なら OK）。 */
 export function validateRecipeForm(data: RecipeFormData): string[] {
   const errors: string[] = [];
@@ -66,19 +57,26 @@ export function validateRecipeForm(data: RecipeFormData): string[] {
   return errors;
 }
 
-const uuid = (): string => crypto.randomUUID();
+const uuid = newId;
 const now = (): string => new Date().toISOString();
 
 /**
- * 手動入力レシピを Dexie に保存する。
+ * 手動入力レシピを保存する。
  *
- * 食材は既存マスタに照合し、未ヒット分は新規マスタとして同時に作成する。すべて 1 つの
- * トランザクションで書き込む。
+ * 食材は既存マスタに照合し、未ヒット分は新規マスタとして同時に作成する。
+ * Supabase 接続時は **Supabase に書いてから Dexie に書く**（レシピの編集・削除と同じ方針。
+ * Dexie だけに書くと他端末に出ず、次回プルでも復元されない）。
  *
+ * @param data - フォーム入力
+ * @param userId - ログイン中のユーザー ID。null なら Dexie のみに保存する
  * @returns 作成されたレシピの ID
  */
-export async function saveManualRecipe(data: RecipeFormData): Promise<string> {
+export async function saveManualRecipe(
+  data: RecipeFormData,
+  userId: string | null = null,
+): Promise<string> {
   const recipeId = uuid();
+  const source = await ensureManualSource(userId);
   const masterIndex = ingredientIndex(await db.ingredients.toArray());
   const newMasters: IngredientRow[] = [];
 
@@ -120,7 +118,7 @@ export async function saveManualRecipe(data: RecipeFormData): Promise<string> {
 
   const recipe: RecipeRow = {
     id: recipeId,
-    source_id: MANUAL_SOURCE.id,
+    source_id: source.id,
     title: data.title.trim(),
     source_url: data.sourceUrl?.trim() || null,
     thumbnail_url: null,
@@ -139,20 +137,29 @@ export async function saveManualRecipe(data: RecipeFormData): Promise<string> {
     updated_at: now(),
   };
 
-  await db.transaction(
-    "rw",
-    db.sources,
-    db.ingredients,
-    db.recipes,
-    db.recipeIngredients,
-    async () => {
-      const existingSource = await db.sources.get(MANUAL_SOURCE.id);
-      if (!existingSource) await db.sources.put({ ...MANUAL_SOURCE, created_at: now() });
-      if (newMasters.length > 0) await db.ingredients.bulkAdd(newMasters);
-      await db.recipes.add(recipe);
-      if (lines.length > 0) await db.recipeIngredients.bulkAdd(lines);
-    },
-  );
+  // 先に Supabase へ。失敗したら Dexie にも書かず、UI にエラーを出す（食い違いを作らない）。
+  if (isSupabaseConfigured && userId !== null) {
+    if (newMasters.length > 0) {
+      const { error } = await supabase
+        .from("ingredients")
+        .insert(newMasters.map((m) => ({ ...m, user_id: userId })));
+      if (error) throw new Error(`食材マスタの保存に失敗しました: ${error.message}`);
+    }
+    const { error: recipeErr } = await supabase
+      .from("recipes")
+      .insert({ ...recipe, user_id: userId });
+    if (recipeErr) throw new Error(`レシピの保存に失敗しました: ${recipeErr.message}`);
+    if (lines.length > 0) {
+      const { error } = await supabase.from("recipe_ingredients").insert(lines);
+      if (error) throw new Error(`材料の保存に失敗しました: ${error.message}`);
+    }
+  }
+
+  await db.transaction("rw", db.ingredients, db.recipes, db.recipeIngredients, async () => {
+    if (newMasters.length > 0) await db.ingredients.bulkAdd(newMasters);
+    await db.recipes.add(recipe);
+    if (lines.length > 0) await db.recipeIngredients.bulkAdd(lines);
+  });
 
   return recipeId;
 }

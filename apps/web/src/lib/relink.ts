@@ -12,6 +12,7 @@ import { classifyIngredient } from "@recipe-planner/core";
 import { supabase, isSupabaseConfigured } from "./supabase.ts";
 import { db, type IngredientRow, type RecipeIngredientRow } from "../db/schema.ts";
 import { ingredientIndex } from "./ingredients.ts";
+import { isUuid, newId } from "./ids.ts";
 
 /** 再照合の結果。 */
 export interface RelinkResult {
@@ -25,7 +26,7 @@ export interface RelinkResult {
   synced: boolean;
 }
 
-const uuid = (): string => crypto.randomUUID();
+const uuid = newId;
 
 /**
  * `ingredient_id` が null の材料行を食材マスタに紐付ける。
@@ -85,8 +86,12 @@ export async function relinkIngredients(userId: string | null): Promise<RelinkRe
         .insert(newMasters.map((m) => ({ ...m, user_id: userId })));
       if (ingErr) throw new Error(`食材マスタの同期に失敗しました: ${ingErr.message}`);
     }
-    const { error: lineErr } = await supabase.from("recipe_ingredients").upsert(updatedLines);
-    if (lineErr) throw new Error(`材料の同期に失敗しました: ${lineErr.message}`);
+    // Supabase に存在しない行（開発用シード等、ID が UUID でないもの）は送らない。
+    const syncable = updatedLines.filter((line) => isUuid(line.id));
+    if (syncable.length > 0) {
+      const { error: lineErr } = await supabase.from("recipe_ingredients").upsert(syncable);
+      if (lineErr) throw new Error(`材料の同期に失敗しました: ${lineErr.message}`);
+    }
     synced = true;
   }
 
