@@ -91,7 +91,7 @@ pnpm --filter @recipe-planner/web typecheck
 - **Build command**: `pnpm --filter @recipe-planner/web build`
 - **Deploy command**: `npx wrangler deploy`（`wrangler.jsonc` を読む）
 - **Path/Root**: `/`（モノレポのため。core を workspace 解決する）
-- **環境変数（ビルド時に焼き込み）**: `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY` / `NODE_VERSION=20`
+- **環境変数（ビルド時に焼き込み）**: `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY` / `NODE_VERSION=22`（supabase-js の realtime が Node 22+ のネイティブ WebSocket を要求する。20 だとテスト実行時に落ちる）
 - SPA fallback は `not_found_handling` が担う。**`_redirects` は置かないこと**（Workers Static Assets も読み込み、`/* /index.html 200` は「無限ループ」判定でデプロイが失敗する code:100324）
 
 ### apps/web の構成
