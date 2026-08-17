@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## プロジェクトの現状
 
-**週間献立プランナー**（レシピ収集 → 献立自動生成 → 買い物リスト）。現時点では**コードは存在せず、`docs/` の設計ドキュメントのみ**がある計画段階。実装を始める際の一次情報源は以下：
+**週間献立プランナー**（レシピ収集 → 献立自動生成 → 買い物リスト）。M1〜M3 相当（取り込みパイプライン・献立生成・買い物リスト）は実装済みで、`docs/` の設計ドキュメントが引き続き一次情報源：
 
 - `docs/Weekly Menu Planner Spec.md` (v0.3) — 機能仕様・ドメインモデル・データモデル（PostgreSQL DDL 含む）・著作権制約
 - `docs/architecture.md` (v0.1) — システム構成・取り込みフロー・モノレポ構成・オフライン戦略
@@ -66,6 +66,8 @@ supabase/functions/   # Deno。レシピ取り込み（抽出）パイプライ�
 
 pnpm workspaces（`packages/*` / `apps/*`）。pnpm は corepack 経由（`corepack enable pnpm`）。
 
+CI は `.github/workflows/ci.yml`（PR と main への push で `pnpm -r typecheck` / `pnpm -r test` / `vite build`、および Edge Function の `deno check`）。
+
 ```bash
 pnpm install                       # 全ワークスペースの依存を導入
 pnpm -r test                       # 全パッケージのテスト（vitest）
@@ -89,7 +91,7 @@ pnpm --filter @recipe-planner/web typecheck
 - **Build command**: `pnpm --filter @recipe-planner/web build`
 - **Deploy command**: `npx wrangler deploy`（`wrangler.jsonc` を読む）
 - **Path/Root**: `/`（モノレポのため。core を workspace 解決する）
-- **環境変数（ビルド時に焼き込み）**: `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY` / `NODE_VERSION=20`
+- **環境変数（ビルド時に焼き込み）**: `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY` / `NODE_VERSION=22`（supabase-js の realtime が Node 22+ のネイティブ WebSocket を要求する。20 だとテスト実行時に落ちる）
 - SPA fallback は `not_found_handling` が担う。**`_redirects` は置かないこと**（Workers Static Assets も読み込み、`/* /index.html 200` は「無限ループ」判定でデプロイが失敗する code:100324）
 
 ### apps/web の構成
@@ -128,7 +130,7 @@ pnpm --filter @recipe-planner/web typecheck
 - core は `deno.json` の import map で `@recipe-planner/core/extraction` 等を相対 `.ts` にエイリアス
 - `_shared/db.ts`(サービスロールで DB 操作。トークン照合(SHA-256 ハッシュ)・レート制限・`import_jobs`・`recipes`/`recipe_ingredients` 挿入)。挿入時に **`ensureSource`(収集元を同定/作成 → `source_id`)** と **`resolveIngredientIds`(core の索引でマスタ照合、未登録は `classifyIngredient` でカテゴリ推定して作成 → `ingredient_id`)** を通す。ここが埋まらないと買い物リストが全部「その他」に落ちる
 - ingest トークンは **PWA の設定画面から発行**（`lib/ingestTokens.ts`。生成・ハッシュは core の `tokens` を Edge と共有するので照合がずれない）。10 分以上 `pending` のジョブは `fail_stalled_import_jobs()` を pg_cron が 5 分ごとに呼んで failed に落とす（PWA 側も 10 分経過を「停止」と表示する）
-- **deno 未インストールのため Deno 側は型チェック未実施**。純粋ロジック(SSRF/JSON-LD/ゲート/HTML)は core に置き vitest でカバー済み
+- ローカルに deno が無くても CI が `deno check` する。純粋ロジック(SSRF/JSON-LD/ゲート/HTML)は core に置き vitest でカバー済み
 
 ## 実装の優先順位
 
