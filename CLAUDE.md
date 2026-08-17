@@ -123,7 +123,7 @@ pnpm --filter @recipe-planner/web typecheck
 
 ### packages/core の構成
 - `src/types/` — 共有ドメイン型（DB は snake_case、ドメイン層は camelCase。変換は永続化層の責務）
-- `src/generation/` — 献立生成。`generateMealPlan()` が入口。`rng.ts`(seeded RNG + softmax) / `scoring.ts`(F-02-2 の重み付け) / `generate.ts`(候補構築→フィルタ→サンプリング→多様性再抽選→制約緩和)。**乱数は注入可能**（テストは `mulberry32` で決定論化）
+- `src/generation/` — 献立生成。`generateMealPlan()` が入口。`rng.ts`(seeded RNG + softmax) / `scoring.ts`(F-02-2 の重み付け) / `generate.ts`(候補構築→フィルタ→サンプリング→多様性再抽選→制約緩和)。**同一食事内の重複だけは緩和対象外**（`SlotRequest.mealId` でグループ化。同じ日の主菜と副菜が同じ料理になるのは献立として成立しないため、埋まらない枠は空のままにする）。**乱数は注入可能**（テストは `mulberry32` で決定論化）
 - `src/shopping/` — 買い物リスト集約。`aggregateShoppingList()` が入口。`units.ts`(単位分類・換算 §5.3) / `aggregate.ts`(展開→スケール→グルーピング→合算→常備品除外→売場順ソート)
 - `src/normalize/` — 食材名の正規化。`name.ts`(`normalizeIngredientName()`: NFKC→ひらがな化→空白除去→小文字化) / `match.ts`(`createIngredientIndex`/`matchIngredientMaster`: 正規化キー＋`aliases` でマスタ照合。行型を持ち込まないため名前取り出し関数 `keysOf` を受ける) / `category.ts`(`classifyIngredient`: 辞書の**最長一致**で売場カテゴリ＋常備品フラグを推定。「冷凍◯◯」は先頭一致で frozen)。手動入力と抽出パイプラインが共有する
 - `src/tokens/` — ingest トークンの生成 (`generateIngestToken`) と SHA-256 ハッシュ (`hashIngestToken`)。**発行する PWA と照合する Edge Function が同じ実装を使うことが必須**なのでここに置く
