@@ -955,6 +955,58 @@ a {
   text-align: right;
 }
 
+/* --- 食材マスタの統合 --- */
+.merge-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.merge-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.merge-item:last-child {
+  border-bottom: none;
+}
+
+.merge-item__names {
+  font-size: 0.9rem;
+  min-width: 0;
+}
+
+.merge-item__meta {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.merge-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.merge-picker select {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  max-width: 40%;
+}
+
 /* --- 常備品 --- */
 .pantry-list {
   list-style: none;

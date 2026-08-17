@@ -27,6 +27,10 @@ export interface RecipeFilter {
   query: string;
   /** 料理の役割。`all` なら絞り込まない。 */
   role: DishRole | "all";
+  /** 収集元。`all` なら絞り込まない。 */
+  sourceId: string | "all";
+  /** 調理時間の上限（分）。null なら絞り込まない。時間が不明なレシピは残す。 */
+  maxCookMin: number | null;
   /** お気に入りのみ。 */
   favoritesOnly: boolean;
   sort: RecipeSort;
@@ -36,6 +40,8 @@ export interface RecipeFilter {
 export const DEFAULT_RECIPE_FILTER: RecipeFilter = {
   query: "",
   role: "all",
+  sourceId: "all",
+  maxCookMin: null,
   favoritesOnly: false,
   sort: "recent",
 };
@@ -83,6 +89,16 @@ export function filterRecipes(
   const matched = entries.filter(({ recipe, ingredientNames }) => {
     if (filter.favoritesOnly && !recipe.is_favorite) return false;
     if (filter.role !== "all" && !recipe.dish_roles.includes(filter.role)) return false;
+    if (filter.sourceId !== "all" && recipe.source_id !== filter.sourceId) return false;
+    // 調理時間が不明なレシピは落とさない（取り込みで取れないことがあり、
+    // 落とすと「30 分以内」で候補がごっそり消えるため）。
+    if (
+      filter.maxCookMin !== null &&
+      recipe.cook_time_min !== null &&
+      recipe.cook_time_min > filter.maxCookMin
+    ) {
+      return false;
+    }
     if (key === "") return true;
 
     const haystack = [recipe.title, ...recipe.tags, ...ingredientNames];

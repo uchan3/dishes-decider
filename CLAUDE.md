@@ -99,7 +99,8 @@ pnpm --filter @recipe-planner/web typecheck
 - レシピ詳細(`/recipe/:id`): 材料・原典リンク・タイトル/お気に入り/タグ編集・除外(「もう出さないで」)・削除(2段階確認)。手順は原典が YouTube なら iframe 埋め込み(`lib/youtube.ts`)、不可なら原典リンク(§3.6/§3.7)。編集/削除は `lib/recipeEdit.ts`。**`updateRecipe`/`deleteRecipe` は Supabase 設定時に Supabase も更新/削除**（Dexie だけ変更すると次回プルで巻き戻る/復活するため）
 - 手動レシピ登録は `src/lib/recipeForm.ts`（保存）＋ `src/lib/ingredients.ts`（core の `createIngredientIndex`/`matchIngredientMaster` を Dexie 行に当てる薄いアダプタ。未ヒットは新規マスタ作成、売場の初期値は `classifyIngredient`）
 - `src/lib/ingestTokens.ts` / `src/lib/importJobs.ts` / `components/IngestCard.tsx` — ショートカット用トークンの発行・失効と、取り込みジョブの状況表示（設定画面）。**生トークンは発行時に一度だけ表示**し DB にはハッシュのみ。`isStalled`（10 分以上 pending）は純粋関数でテスト有り
-- `src/lib/recipeSearch.ts` — ライブラリの検索・絞り込み・並べ替え(F-01-3)。`filterRecipes` は純粋関数（テスト有り）。検索は**タイトル・タグ・材料名**が対象で、照合は `normalizeIngredientName` を通すのでカナ/空白の揺れを吸収する
+- `src/lib/recipeSearch.ts` — ライブラリの検索・絞り込み・並べ替え(F-01-3)。`filterRecipes` は純粋関数（テスト有り）。検索は**タイトル・タグ・材料名**が対象で、照合は `normalizeIngredientName` を通すのでカナ/空白の揺れを吸収する。絞り込みは役割・ソース・調理時間・お気に入り（**調理時間が不明なレシピは落とさない**）
+- `src/lib/ingredientMerge.ts` — 食材マスタの統合(§5.3)。`mergeIngredients` が材料行・買い物リスト項目の参照を付け替え、消える側の名前を `aliases` に引き継いで削除する（送信キュー経由で Supabase にも反映。削除は最後に送る）。候補提示 `suggestMerges` は**わざと保守的**で、正規化キー一致か「同カテゴリで名前を丸ごと含む」場合のみ。3-gram 類似度は「牛こま切れ肉/豚こま切れ肉」を似ていると誤判定するため使わない
 - `src/lib/relink.ts` — `ingredient_id` が null の材料をマスタに再照合する保守処理（設定画面から実行）。S1 以前に取り込んだレシピを救済する。Dexie と Supabase の両方を更新
 - 注意: `recipes` の Dexie インデックスは `id, source_id, *dish_roles, last_cooked_at` のみ。`title` 等の非インデックス列で `orderBy` するとエラーになるため、メモリ内ソートする
 - `src/db/` — Dexie。**行は snake_case で保持**（Supabase と 1:1 同期のため）、`mappers.ts` で core の camelCase ドメイン型へ変換。IndexedDB は boolean をキーにできないため `is_checked` 等はインデックスせずメモリでフィルタ
