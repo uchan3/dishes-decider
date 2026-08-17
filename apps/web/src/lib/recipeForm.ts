@@ -19,7 +19,8 @@ import {
 } from "../db/schema.ts";
 import { ingredientIndex } from "./ingredients.ts";
 import { ensureManualSource } from "./sources.ts";
-import { supabase, isSupabaseConfigured } from "./supabase.ts";
+import { enqueue } from "./outbox.ts";
+import { flushSoon } from "./outboxSync.ts";
 import { newId } from "./ids.ts";
 
 /** フォームの 1 材料行。 */
@@ -64,8 +65,8 @@ const now = (): string => new Date().toISOString();
  * 手動入力レシピを保存する。
  *
  * 食材は既存マスタに照合し、未ヒット分は新規マスタとして同時に作成する。
- * Supabase 接続時は **Supabase に書いてから Dexie に書く**（レシピの編集・削除と同じ方針。
- * Dexie だけに書くと他端末に出ず、次回プルでも復元されない）。
+ * **Dexie に書いてから送信キューに積む**ので、オフラインでも登録できる（レシピの編集・
+ * 削除と同じ方針）。
  *
  * @param data - フォーム入力
  * @param userId - ログイン中のユーザー ID。null なら Dexie のみに保存する
@@ -137,29 +138,17 @@ export async function saveManualRecipe(
     updated_at: now(),
   };
 
-  // 先に Supabase へ。失敗したら Dexie にも書かず、UI にエラーを出す（食い違いを作らない）。
-  if (isSupabaseConfigured && userId !== null) {
-    if (newMasters.length > 0) {
-      const { error } = await supabase
-        .from("ingredients")
-        .insert(newMasters.map((m) => ({ ...m, user_id: userId })));
-      if (error) throw new Error(`食材マスタの保存に失敗しました: ${error.message}`);
-    }
-    const { error: recipeErr } = await supabase
-      .from("recipes")
-      .insert({ ...recipe, user_id: userId });
-    if (recipeErr) throw new Error(`レシピの保存に失敗しました: ${recipeErr.message}`);
-    if (lines.length > 0) {
-      const { error } = await supabase.from("recipe_ingredients").insert(lines);
-      if (error) throw new Error(`材料の保存に失敗しました: ${error.message}`);
-    }
-  }
-
   await db.transaction("rw", db.ingredients, db.recipes, db.recipeIngredients, async () => {
     if (newMasters.length > 0) await db.ingredients.bulkAdd(newMasters);
     await db.recipes.add(recipe);
     if (lines.length > 0) await db.recipeIngredients.bulkAdd(lines);
   });
+
+  // 送信は外部キーの順（食材マスタ → レシピ → 材料）に積む。キューはこの順序を保つ。
+  for (const master of newMasters) await enqueue("ingredients", master.id, "put");
+  await enqueue("recipes", recipeId, "put");
+  for (const line of lines) await enqueue("recipeIngredients", line.id, "put");
+  flushSoon();
 
   return recipeId;
 }

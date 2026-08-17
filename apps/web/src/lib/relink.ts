@@ -9,10 +9,12 @@
  */
 
 import { classifyIngredient } from "@recipe-planner/core";
-import { supabase, isSupabaseConfigured } from "./supabase.ts";
+import { isSupabaseConfigured } from "./supabase.ts";
 import { db, type IngredientRow, type RecipeIngredientRow } from "../db/schema.ts";
 import { ingredientIndex } from "./ingredients.ts";
-import { isUuid, newId } from "./ids.ts";
+import { newId } from "./ids.ts";
+import { enqueue } from "./outbox.ts";
+import { flushSoon } from "./outboxSync.ts";
 
 /** 再照合の結果。 */
 export interface RelinkResult {
@@ -32,7 +34,7 @@ const uuid = newId;
  * `ingredient_id` が null の材料行を食材マスタに紐付ける。
  *
  * 既存マスタに一致しない食材は、売場カテゴリと常備品フラグを推定して新規作成する。
- * Supabase が設定済みかつログイン中なら、同じ変更を Supabase にも反映する
+ * Supabase が設定済みかつログイン中なら、同じ変更を送信キューに積む
  * （Dexie だけ直すと次回プルで巻き戻るため）。
  *
  * @param userId - ログイン中のユーザー ID。null なら Dexie のみ更新する
@@ -77,28 +79,17 @@ export async function relinkIngredients(userId: string | null): Promise<RelinkRe
     await db.recipeIngredients.bulkPut(updatedLines);
   });
 
-  let synced = false;
-  if (isSupabaseConfigured && userId !== null) {
-    // Dexie 行は Supabase と 1:1 なのでそのまま upsert できる（材料は全列を持つ）。
-    if (newMasters.length > 0) {
-      const { error: ingErr } = await supabase
-        .from("ingredients")
-        .insert(newMasters.map((m) => ({ ...m, user_id: userId })));
-      if (ingErr) throw new Error(`食材マスタの同期に失敗しました: ${ingErr.message}`);
-    }
-    // Supabase に存在しない行（開発用シード等、ID が UUID でないもの）は送らない。
-    const syncable = updatedLines.filter((line) => isUuid(line.id));
-    if (syncable.length > 0) {
-      const { error: lineErr } = await supabase.from("recipe_ingredients").upsert(syncable);
-      if (lineErr) throw new Error(`材料の同期に失敗しました: ${lineErr.message}`);
-    }
-    synced = true;
-  }
+  // Supabase への反映は送信キュー経由（オフラインでも再照合できる）。
+  // 外部キーの順に積む: 食材マスタ → 材料。
+  for (const master of newMasters) await enqueue("ingredients", master.id, "put");
+  for (const line of updatedLines) await enqueue("recipeIngredients", line.id, "put");
+  const queued = isSupabaseConfigured && userId !== null;
+  if (queued) flushSoon();
 
   return {
     scanned: pending.length,
     linked: updatedLines.length,
     created: newMasters.length,
-    synced,
+    synced: queued,
   };
 }
