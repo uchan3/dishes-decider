@@ -354,12 +354,20 @@ a {
   padding: 0;
 }
 
+.shop-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .shop-item label {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 8px 0;
   cursor: pointer;
+  flex: 1;
+  min-width: 0;
 }
 
 .shop-item__name {
@@ -379,6 +387,74 @@ a {
 .shop-item--done .shop-item__name {
   text-decoration: line-through;
   color: var(--muted);
+}
+
+/* --- 買い物リストへの手動追加（US-13） --- */
+.add-item {
+  margin-top: 24px;
+}
+
+.add-item__row {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.add-item input {
+  font: inherit;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  min-width: 0;
+}
+
+.add-item__name {
+  flex: 1;
+}
+
+.add-item__qty {
+  width: 64px;
+}
+
+.add-item__unit {
+  width: 64px;
+}
+
+/* --- レシピの検索・絞り込み（F-01-3） --- */
+.filters {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.filters__search {
+  font: inherit;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  width: 100%;
+}
+
+.filters__row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.filters__row select {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
 }
 
 /* --- フォーム --- */

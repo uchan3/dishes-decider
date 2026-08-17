@@ -12,9 +12,10 @@
  * 常備品を一度隠しただけでチェックが消えてしまうため。
  */
 
-import { normalizeIngredientName, type ShoppingItem } from "@recipe-planner/core";
+import { classifyIngredient, normalizeIngredientName, type ShoppingItem } from "@recipe-planner/core";
 import { db, type MealPlanRow, type ShoppingItemRow } from "../db/schema.ts";
 import { buildShoppingItems } from "./planning.ts";
+import { newId } from "./ids.ts";
 
 /** 献立 1 週分に対応する買い物リストの ID（1:1 なので献立 ID から決まる）。 */
 export const shoppingListId = (planId: string): string => `list-${planId}`;
@@ -123,6 +124,60 @@ export async function syncShoppingList(
   });
 
   return rows.length;
+}
+
+/** 手動追加の入力。 */
+export interface ManualItemInput {
+  displayName: string;
+  quantity: number | null;
+  unit: string | null;
+}
+
+/**
+ * 献立に関係ない品を買い物リストに足す（US-13。牛乳・トイレットペーパー等）。
+ *
+ * 売場カテゴリは取り込みと同じ {@link classifyIngredient} で推定する（辞書に無ければ
+ * 「その他」）。`is_manual` を立てるので、献立を作り直しても消えない。
+ *
+ * @returns 追加された行。名前が空なら null
+ */
+export async function addManualItem(
+  planId: string,
+  input: ManualItemInput,
+): Promise<ShoppingItemRow | null> {
+  const displayName = input.displayName.trim();
+  if (displayName === "") return null;
+
+  const existing = await db.shoppingItems.where("meal_plan_id").equals(planId).toArray();
+  const maxPosition = existing.reduce((max, row) => Math.max(max, row.position), -1);
+
+  const row: ShoppingItemRow = {
+    id: newId(),
+    shopping_list_id: shoppingListId(planId),
+    meal_plan_id: planId,
+    ingredient_id: null,
+    display_name: displayName,
+    quantity: input.quantity,
+    unit: input.unit?.trim() || null,
+    ambiguous_note: null,
+    category: classifyIngredient(displayName).category,
+    is_checked: false,
+    is_manual: true,
+    source_recipe_ids: [],
+    position: maxPosition + 1,
+  };
+  await db.shoppingItems.add(row);
+  return row;
+}
+
+/**
+ * 買い物リストから項目を削除する。
+ *
+ * 献立由来の項目を消しても次の組み立て直しで戻ってくるため、UI では手動追加の項目に
+ * だけ削除を出す（買わない品は常備品にするか、チェックして消す運用）。
+ */
+export async function removeShoppingItem(id: string): Promise<void> {
+  await db.shoppingItems.delete(id);
 }
 
 /** 項目のチェック状態を更新する（買い出し中の主操作）。 */
