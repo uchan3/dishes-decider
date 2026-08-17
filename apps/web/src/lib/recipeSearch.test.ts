@@ -130,3 +130,39 @@ describe("filterRecipes", () => {
     expect(filterRecipes(entries, { ...DEFAULT_RECIPE_FILTER, query: "パスタ" })).toEqual([]);
   });
 });
+
+describe("filterRecipes（ソース・調理時間）", () => {
+  const fromYoutube = recipe({
+    id: "y1",
+    title: "リュウジの一品",
+    source_id: "src-ryuji",
+    cook_time_min: 10,
+  });
+  const unknownTime = recipe({ id: "u1", title: "時間未設定", cook_time_min: null });
+  const withSource: RecipeSearchEntry[] = [
+    entry(nikujaga), // 40 分・source なし
+    entry(karaage), // 30 分・source なし
+    entry(fromYoutube),
+    entry(unknownTime),
+  ];
+
+  it("filters by source", () => {
+    const rows = filterRecipes(withSource, { ...DEFAULT_RECIPE_FILTER, sourceId: "src-ryuji" });
+    expect(ids(rows)).toEqual(["y1"]);
+  });
+
+  it("filters by cook time but keeps recipes with an unknown time", () => {
+    const rows = filterRecipes(withSource, { ...DEFAULT_RECIPE_FILTER, maxCookMin: 30 });
+    // 40 分のもの（肉じゃが・唐揚げ）が落ちる。時間不明の u1 は残す。
+    expect(ids(rows).sort()).toEqual(["u1", "y1"]);
+  });
+
+  it("combines source and cook time with the query", () => {
+    const rows = filterRecipes(withSource, {
+      ...DEFAULT_RECIPE_FILTER,
+      query: "リュウジ",
+      maxCookMin: 15,
+    });
+    expect(ids(rows)).toEqual(["y1"]);
+  });
+});

@@ -22,6 +22,7 @@ import { pullLibrary } from "../lib/sync.ts";
 import { relinkIngredients } from "../lib/relink.ts";
 import { setSourceEnabled } from "../lib/sources.ts";
 import { IngestCard } from "../components/IngestCard.tsx";
+import { MergeIngredientsCard } from "../components/MergeIngredientsCard.tsx";
 import { pendingCount } from "../lib/outbox.ts";
 import { flushNow } from "../lib/outboxSync.ts";
 
@@ -386,6 +387,8 @@ export function SettingsPage() {
         </div>
       </div>
 
+      <MergeIngredientsCard />
+
       <div className="card">
         <h2>常備品</h2>
         <p className="muted">
@@ -434,8 +437,8 @@ export function SettingsPage() {
       <div className="card">
         <h2>今後実装予定</h2>
         <ul className="muted">
-          <li>食材マスタの統合（表記ゆれのマージ）</li>
-          <li>献立・買い物リストの端末間同期</li>
+          <li>レシピの一覧表示の切替（グリッド / リスト）</li>
+          <li>買い物リストの数量の手直し</li>
         </ul>
       </div>
     </section>

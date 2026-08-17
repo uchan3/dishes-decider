@@ -27,6 +27,14 @@ const ROLE_OPTIONS: { value: DishRole | "all"; label: string }[] = [
   { value: "staple", label: "主食" },
 ];
 
+/** 調理時間の絞り込み（分）。null = 指定なし。 */
+const COOK_TIME_OPTIONS: { value: number | null; label: string }[] = [
+  { value: null, label: "調理時間すべて" },
+  { value: 15, label: "15分以内" },
+  { value: 30, label: "30分以内" },
+  { value: 60, label: "60分以内" },
+];
+
 const SORT_OPTIONS: { value: RecipeSort; label: string }[] = [
   { value: "recent", label: "追加が新しい順" },
   { value: "last_cooked", label: "最近作った順" },
@@ -38,8 +46,12 @@ const SORT_OPTIONS: { value: RecipeSort; label: string }[] = [
 export function LibraryPage() {
   const [query, setQuery] = useState("");
   const [role, setRole] = useState<DishRole | "all">("all");
+  const [sourceId, setSourceId] = useState<string | "all">("all");
+  const [maxCookMin, setMaxCookMin] = useState<number | null>(null);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [sort, setSort] = useState<RecipeSort>(DEFAULT_RECIPE_FILTER.sort);
+
+  const sources = useLiveQuery(() => db.sources.toArray(), [], []);
 
   // 検索は材料名も対象にするため、レシピと材料を突き合わせた索引を作る。
   const entries = useLiveQuery(async () => {
@@ -60,8 +72,8 @@ export function LibraryPage() {
   }, []);
 
   const recipes = useMemo(
-    () => filterRecipes(entries ?? [], { query, role, favoritesOnly, sort }),
-    [entries, query, role, favoritesOnly, sort],
+    () => filterRecipes(entries ?? [], { query, role, sourceId, maxCookMin, favoritesOnly, sort }),
+    [entries, query, role, sourceId, maxCookMin, favoritesOnly, sort],
   );
 
   if (!entries) return <p className="muted">読み込み中…</p>;
@@ -97,6 +109,24 @@ export function LibraryPage() {
           <select value={role} onChange={(e) => setRole(e.target.value as DishRole | "all")}>
             {ROLE_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <select value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
+            <option value="all">すべてのソース</option>
+            {sources.map((source) => (
+              <option key={source.id} value={source.id}>
+                {source.name}
+              </option>
+            ))}
+          </select>
+          <select
+            value={maxCookMin ?? ""}
+            onChange={(e) => setMaxCookMin(e.target.value === "" ? null : Number(e.target.value))}
+          >
+            {COOK_TIME_OPTIONS.map((o) => (
+              <option key={o.label} value={o.value ?? ""}>
                 {o.label}
               </option>
             ))}
