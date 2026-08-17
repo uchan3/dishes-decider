@@ -111,8 +111,12 @@ pnpm --filter @recipe-planner/web typecheck
 - 常備品(US-10): 設定画面の食材マスタ一覧でトグル（`setPantryStaple`）。買い物リストは常備品も保存しつつ既定で非表示にする
 - `src/db/seed.ts` — 開発用サンプルデータ（抽出パイプライン未実装のため。設定画面から投入）
 - **Supabase 連携（レシピライブラリのみ）**: `lib/supabase.ts`(クライアント・`VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY`) / `lib/auth.tsx`(メール＋パスワード認証コンテキスト) / `AppGate.tsx`(未認証はログイン画面、認証時に同期起動) / `lib/sync.ts`(`pullLibrary`: recipes/sources/ingredients を Supabase→Dexie に一方向プル、`subscribeImports`: import_jobs の Realtime で取り込み完了時に再プル)。**UI は常に Dexie から読む**（Supabase は同期元）。env 未設定ならログインを出さずローカル Dexie のみで動作
-- **書き戻し（Dexie → Supabase）**: レシピ編集/削除 (`lib/recipeEdit.ts`)・ソースの有効無効 (`lib/sources.ts`)・常備品フラグ (`lib/ingredients.ts` の `setPantryStaple`)・手動レシピ登録 (`lib/recipeForm.ts`) は **Supabase に書いてから Dexie に書く**（失敗時は Dexie にも書かず食い違いを作らない）。`lib/ids.ts` の `isUuid` で「Supabase に存在しない行（開発用シード等）」をガードする。手動レシピのソースは `ensureManualSource` が Supabase の `(manual, manual)` 行を正とし、その UUID を Dexie の ID にも使う
-- **献立・買い物リストの双方向同期（outbox → Supabase）は未実装**（Dexie ローカルのまま）。オフライン時は上記の書き戻しが失敗して操作自体が止まる。ここを「ローカルに書いて後で送る」にするのが outbox の作業
+- **書き戻し（Dexie → Supabase）は送信キュー経由**（`lib/outbox.ts` / `lib/outboxSync.ts`、architecture §5.1）。レシピ編集/削除・ソースの有効無効・常備品フラグ・手動レシピ登録・食材の再照合はすべて **Dexie に書く → `outbox` に積む → オンライン時に流す**。オフラインでも操作は成功する
+  - 送るのは差分でなく**現在の行**（state-based）。同じ行の連続編集は `coalesceOutbox` で 1 件に畳む。1 件失敗したらそこで止め、指数バックオフで再試行（起点は 起動時 / `online` イベント / バックオフ）
+  - `lib/ids.ts` の `isUuid` と `isSupabaseConfigured` で「Supabase に存在しえない行」「ローカル専用モード」は積まない。`recipes` の `source_id` が UUID でない場合は送信時に null に落とす（`src-manual` はサーバに無いため）
+  - 手動レシピのソースは `ensureManualSource` が Supabase の `(manual, manual)` 行を正とし、その UUID を Dexie の ID にも使う。オフライン時はローカル専用ソースにフォールバックする
+  - 設定画面に未送信件数と「今すぐ送信」を表示する
+- **献立・買い物リストの端末間同期は未実装**（Dexie ローカルのまま）。Dexie 側の ID が `plan-YYYY-MM-DD` / `date#role#index` という決定的な文字列で、Supabase の uuid 主キーと合わないこと、`plan_slots.cooked_at` と `meals.template_id`(テキストのプリセット名) が Supabase 側に無いことが障害。ID の UUID 化＋スキーマ調整が要る
 
 ### packages/core の構成
 - `src/types/` — 共有ドメイン型（DB は snake_case、ドメイン層は camelCase。変換は永続化層の責務）

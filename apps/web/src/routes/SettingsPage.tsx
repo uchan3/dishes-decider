@@ -22,6 +22,8 @@ import { pullLibrary } from "../lib/sync.ts";
 import { relinkIngredients } from "../lib/relink.ts";
 import { setSourceEnabled } from "../lib/sources.ts";
 import { IngestCard } from "../components/IngestCard.tsx";
+import { pendingCount } from "../lib/outbox.ts";
+import { flushNow } from "../lib/outboxSync.ts";
 
 /** 売場カテゴリの並び順とラベル（買い物リストの導線順に合わせる）。 */
 const CATEGORY_ORDER: IngredientCategory[] = [
@@ -80,6 +82,9 @@ export function SettingsPage() {
   }, []);
   const { configured, session, userId, signOut } = useAuth();
 
+  /** まだ Supabase に送れていない変更の数（オフライン中に溜まる）。 */
+  const unsentCount = useLiveQuery(() => pendingCount(), []);
+
   /** 食材マスタに紐付いていない材料の数（再照合の要否を示す）。 */
   const unlinkedCount = useLiveQuery(async () => {
     const lines = await db.recipeIngredients.toArray();
@@ -96,6 +101,20 @@ export function SettingsPage() {
       setMessage(`同期しました（レシピ ${n} 件）。`);
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "同期に失敗しました");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleFlush() {
+    setBusy(true);
+    try {
+      const r = await flushNow();
+      setMessage(
+        r.stoppedBy === null
+          ? `未送信の変更を ${r.sent} 件送りました。`
+          : `${r.sent} 件送信、${r.remaining} 件残っています（${r.stoppedBy}）。`,
+      );
     } finally {
       setBusy(false);
     }
@@ -191,6 +210,20 @@ export function SettingsPage() {
           <p className="muted">
             取り込んだレシピは自動で同期されます（取り込み完了時に反映）。
           </p>
+          <p className="muted">
+            {unsentCount === undefined
+              ? ""
+              : unsentCount === 0
+                ? "未送信の変更はありません。"
+                : `未送信の変更が ${unsentCount} 件あります（オンラインになると自動で送られます）。`}
+          </p>
+          {unsentCount !== undefined && unsentCount > 0 && (
+            <div className="btn-row">
+              <button onClick={handleFlush} disabled={busy} className="btn">
+                今すぐ送信
+              </button>
+            </div>
+          )}
         </div>
       )}
 
