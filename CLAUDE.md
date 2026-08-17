@@ -116,7 +116,10 @@ pnpm --filter @recipe-planner/web typecheck
   - `lib/ids.ts` の `isUuid` と `isSupabaseConfigured` で「Supabase に存在しえない行」「ローカル専用モード」は積まない。`recipes` の `source_id` が UUID でない場合は送信時に null に落とす（`src-manual` はサーバに無いため）
   - 手動レシピのソースは `ensureManualSource` が Supabase の `(manual, manual)` 行を正とし、その UUID を Dexie の ID にも使う。オフライン時はローカル専用ソースにフォールバックする
   - 設定画面に未送信件数と「今すぐ送信」を表示する
-- **献立・買い物リストの端末間同期は未実装**（Dexie ローカルのまま）。Dexie 側の ID が `plan-YYYY-MM-DD` / `date#role#index` という決定的な文字列で、Supabase の uuid 主キーと合わないこと、`plan_slots.cooked_at` と `meals.template_id`(テキストのプリセット名) が Supabase 側に無いことが障害。ID の UUID 化＋スキーマ調整が要る
+- **献立・買い物リストの端末間同期**(US-14) は `lib/planSync.ts`。サーバーが中身を読む場面が無いため正規化テーブルには展開せず、**クライアントの入れ子ドキュメントを 1 週 1 行の jsonb に入れる**（`meal_plans.doc` / `shopping_lists.doc`）。既存の `meals`/`plan_slots`/`shopping_items` テーブルは未使用のまま残している
+  - 献立は**ドキュメント単位の LWW**、買い物リストは**項目単位のマージ**（二人が同じ店で別々の項目にチェックしても消えないように）。どの項目が存在するかは新しい方のドキュメントに従う
+  - LWW の時計は doc 内の `updated_at`（Supabase の `updated_at` はトリガが上書きするため使わない）
+  - 送信は outbox の `planDocs` テーブル経由（`plan-YYYY-MM-DD` をキーにするので `isUuid` ガードの例外）。受信は起動時の `pullPlans()` と `meal_plans`/`shopping_lists` の Realtime
 
 ### packages/core の構成
 - `src/types/` — 共有ドメイン型（DB は snake_case、ドメイン層は camelCase。変換は永続化層の責務）

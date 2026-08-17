@@ -23,6 +23,8 @@ export const SYNC_TABLES = {
   recipeIngredients: "recipe_ingredients",
   ingredients: "ingredients",
   sources: "sources",
+  /** 週ドキュメント（献立＋買い物リスト）。Dexie の 1 行ではなく組み立てて送る。 */
+  planDocs: "meal_plans",
 } as const;
 
 /** 同期対象テーブルの Dexie 側の名前。 */
@@ -30,6 +32,24 @@ export type SyncTable = keyof typeof SYNC_TABLES;
 
 /** 送信の向き。`put` は現在の行を upsert、`delete` は削除。 */
 export type OutboxOp = OutboxRow["op"];
+
+/**
+ * Dexie の 1 行に対応しないテーブル（週ドキュメント）。ID が UUID でなくても積む
+ * ＝ `plan-2026-08-17` のような決定的なキーをそのまま使う。
+ */
+const DOC_TABLES: ReadonlySet<SyncTable> = new Set<SyncTable>(["planDocs"]);
+
+/**
+ * 送信対象を読み出す関数。既定は Dexie の同名テーブルから 1 行取るだけ。
+ * 週ドキュメントのように組み立てが要るものは呼び出し側が差し替える。
+ */
+export type RowLoader = (
+  table: SyncTable,
+  id: string,
+) => Promise<Record<string, unknown> | undefined>;
+
+const defaultLoader: RowLoader = async (table, id) =>
+  (await db.table(table).get(id)) as Record<string, unknown> | undefined;
 
 /**
  * 実際に Supabase へ送る処理。テストで差し替えられるよう関数で受け取る。
@@ -85,7 +105,8 @@ export function backoffDelayMs(attempt: number, baseMs = 1000, maxMs = 5 * 60 * 
  * @param op - `put`（現在の行を送る）か `delete`
  */
 export async function enqueue(table: SyncTable, recordId: string, op: OutboxOp): Promise<void> {
-  if (!isSupabaseConfigured || !isUuid(recordId)) return;
+  if (!isSupabaseConfigured) return;
+  if (!DOC_TABLES.has(table) && !isUuid(recordId)) return;
   await db.outbox.add({
     table_name: table,
     record_id: recordId,
@@ -111,6 +132,7 @@ export async function pendingCount(): Promise<number> {
 export async function flushOutbox(
   sender: OutboxSender,
   isOnline: () => boolean = () => navigator.onLine,
+  loadRow: RowLoader = defaultLoader,
 ): Promise<FlushResult> {
   const all = await db.outbox.orderBy("seq").toArray();
   const entries = coalesceOutbox(all);
@@ -124,9 +146,9 @@ export async function flushOutbox(
       if (entry.op === "delete") {
         await sender.remove(table, entry.record_id);
       } else {
-        const row = await db.table(table).get(entry.record_id);
+        const row = await loadRow(table, entry.record_id);
         // Dexie から消えている＝後で delete が積まれている。ここでは送らずに捨てる。
-        if (row) await sender.put(table, row as Record<string, unknown>);
+        if (row) await sender.put(table, row);
       }
     } catch (e) {
       return {

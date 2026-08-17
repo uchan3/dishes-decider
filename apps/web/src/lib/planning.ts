@@ -22,6 +22,14 @@ import {
   loadWeekdayTemplates,
   type PlanningSettings,
 } from "./settings.ts";
+import { enqueue } from "./outbox.ts";
+import { flushSoon } from "./outboxSync.ts";
+
+/** 献立の変更を端末間同期のキューに積む（週ドキュメント単位）。 */
+async function queuePlanDoc(planId: string): Promise<void> {
+  await enqueue("planDocs", planId, "put");
+  flushSoon();
+}
 
 /** ユーザー設定を core の生成設定（部分指定）に写す。 */
 function generationSettings(settings: PlanningSettings) {
@@ -155,6 +163,7 @@ export async function generateWeek(startDate: string): Promise<GeneratedWeek> {
   };
 
   await db.mealPlans.put(plan);
+  await queuePlanDoc(plan.id);
 
   return {
     plan,
@@ -244,6 +253,7 @@ async function reshuffleSlots(
 
   next.updated_at = new Date().toISOString();
   await db.mealPlans.put(next);
+  await queuePlanDoc(next.id);
 
   // 未割当は最終状態から数える（現状維持したスロットは未割当に含めない）。
   const unfilledCount = regen.filter(({ slot }) => slot.recipe_id === null).length;
@@ -278,6 +288,7 @@ export async function toggleSlotLock(plan: MealPlanRow, slotId: string): Promise
   }
   next.updated_at = new Date().toISOString();
   await db.mealPlans.put(next);
+  await queuePlanDoc(next.id);
   return next;
 }
 

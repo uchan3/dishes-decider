@@ -12,6 +12,8 @@
 
 import { db, type MealPlanRow } from "../db/schema.ts";
 import { updateRecipe } from "./recipeEdit.ts";
+import { enqueue } from "./outbox.ts";
+import { flushSoon } from "./outboxSync.ts";
 
 /**
  * 保存済みの献立から、そのレシピを最後に作った日を求める（純粋関数）。
@@ -69,6 +71,8 @@ export async function setSlotCooked(
   slot.cooked_at = cooked ? meal.date : null;
   next.updated_at = new Date().toISOString();
   await db.mealPlans.put(next);
+  await enqueue("planDocs", next.id, "put");
+  flushSoon();
 
   const recipeId = slot.recipe_id;
   if (recipeId === null) return next;
