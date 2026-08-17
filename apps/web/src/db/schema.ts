@@ -124,6 +124,11 @@ export interface ShoppingItemRow {
   is_manual: boolean;
   source_recipe_ids: string[];
   position: number;
+  /**
+   * この項目を最後に変更した時刻。端末間マージでチェック状態の新しい方を選ぶのに使う
+   * （非インデックス列なので Dexie のバージョン更新は不要）。
+   */
+  updated_at?: string;
 }
 
 /** オフライン同期の送信キュー（outbox パターン）。 */

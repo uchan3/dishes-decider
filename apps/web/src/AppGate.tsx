@@ -11,6 +11,7 @@ import { useAuth } from "./lib/auth.tsx";
 import { LoginPage } from "./routes/LoginPage.tsx";
 import { pullLibrary, subscribeImports } from "./lib/sync.ts";
 import { startOutboxSync } from "./lib/outboxSync.ts";
+import { pullPlans, subscribePlans } from "./lib/planSync.ts";
 
 export function AppGate() {
   const { ready, userId, configured } = useAuth();
@@ -22,10 +23,16 @@ export function AppGate() {
     const unsubscribe = subscribeImports((count) =>
       console.log(`[sync] realtime pull done: ${count} recipes`),
     );
+    // 献立・買い物リストは相手の端末の変更も受け取る（買い物中のチェックが反映される）。
+    void pullPlans().catch((e) => console.error("[sync] pullPlans 失敗", e));
+    const unsubscribePlans = subscribePlans((applied) => {
+      if (applied > 0) console.log(`[sync] plans updated: ${applied}`);
+    });
     // ローカルに溜まった変更を送る（オンライン復帰時にも自動で流れる）。
     const stopOutbox = startOutboxSync(userId);
     return () => {
       unsubscribe();
+      unsubscribePlans();
       stopOutbox();
     };
   }, [configured, userId]);

@@ -16,6 +16,14 @@ import { classifyIngredient, normalizeIngredientName, type ShoppingItem } from "
 import { db, type MealPlanRow, type ShoppingItemRow } from "../db/schema.ts";
 import { buildShoppingItems } from "./planning.ts";
 import { newId } from "./ids.ts";
+import { enqueue } from "./outbox.ts";
+import { flushSoon } from "./outboxSync.ts";
+
+/** 買い物リストの変更を端末間同期のキューに積む（週ドキュメント単位）。 */
+async function queuePlanDoc(planId: string): Promise<void> {
+  await enqueue("planDocs", planId, "put");
+  flushSoon();
+}
 
 /** 献立 1 週分に対応する買い物リストの ID（1:1 なので献立 ID から決まる）。 */
 export const shoppingListId = (planId: string): string => `list-${planId}`;
@@ -83,6 +91,8 @@ export function reconcileShoppingItems(
       is_manual: false,
       source_recipe_ids: item.sourceRecipeIds,
       position: index,
+      // チェック時刻は引き継ぐ（端末間マージで「どちらが新しいか」を判定するため）。
+      ...(prev?.updated_at === undefined ? {} : { updated_at: prev.updated_at }),
     };
   });
 
@@ -122,6 +132,7 @@ export async function syncShoppingList(
     if (removedIds.length > 0) await db.shoppingItems.bulkDelete(removedIds);
     await db.shoppingItems.bulkPut(rows);
   });
+  await queuePlanDoc(plan.id);
 
   return rows.length;
 }
@@ -165,8 +176,10 @@ export async function addManualItem(
     is_manual: true,
     source_recipe_ids: [],
     position: maxPosition + 1,
+    updated_at: new Date().toISOString(),
   };
   await db.shoppingItems.add(row);
+  await queuePlanDoc(planId);
   return row;
 }
 
@@ -177,12 +190,19 @@ export async function addManualItem(
  * だけ削除を出す（買わない品は常備品にするか、チェックして消す運用）。
  */
 export async function removeShoppingItem(id: string): Promise<void> {
+  const row = await db.shoppingItems.get(id);
   await db.shoppingItems.delete(id);
+  if (row) await queuePlanDoc(row.meal_plan_id);
 }
 
 /** 項目のチェック状態を更新する（買い出し中の主操作）。 */
 export async function setItemChecked(id: string, isChecked: boolean): Promise<void> {
-  await db.shoppingItems.update(id, { is_checked: isChecked });
+  await db.shoppingItems.update(id, {
+    is_checked: isChecked,
+    updated_at: new Date().toISOString(),
+  });
+  const row = await db.shoppingItems.get(id);
+  if (row) await queuePlanDoc(row.meal_plan_id);
 }
 
 /**
@@ -194,7 +214,11 @@ export async function clearChecked(planId: string): Promise<number> {
   const rows = await db.shoppingItems.where("meal_plan_id").equals(planId).toArray();
   const checked = rows.filter((row) => row.is_checked);
   if (checked.length > 0) {
-    await db.shoppingItems.bulkPut(checked.map((row) => ({ ...row, is_checked: false })));
+    const now = new Date().toISOString();
+    await db.shoppingItems.bulkPut(
+      checked.map((row) => ({ ...row, is_checked: false, updated_at: now })),
+    );
+    await queuePlanDoc(planId);
   }
   return checked.length;
 }
