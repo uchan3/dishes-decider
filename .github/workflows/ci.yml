@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# 同じブランチで新しい push があれば古い実行は止める（無料枠の節約）。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: typecheck / test / build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable pnpm
+        run: corepack enable pnpm
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm -r typecheck
+
+      - run: pnpm -r test
+
+      # Cloudflare 側と同じコマンド。デプロイ時に初めて壊れているのを防ぐ。
+      - run: pnpm --filter @recipe-planner/web build
+
+  deno:
+    name: deno check (edge functions)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      # Edge Function はローカルに deno が無いことが多く型検査から漏れるため、ここで見る。
+      # core を import map 経由で解決するので設定ファイルを明示する。
+      - name: Type check
+        working-directory: supabase/functions
+        run: deno check --config deno.json ingest/index.ts

@@ -9,7 +9,7 @@ export default defineConfig({
       registerType: "autoUpdate",
       // アプリシェル（JS/CSS/HTML）は Precache。Supabase レスポンスは Dexie が担うためキャッシュしない。
       workbox: {
-        globPatterns: ["**/*.{js,css,html,svg}"],
+        globPatterns: ["**/*.{js,css,html,svg,png}"],
       },
       manifest: {
         name: "週間献立プランナー",
@@ -20,7 +20,17 @@ export default defineConfig({
         display: "standalone",
         lang: "ja",
         start_url: "/",
-        // TODO: icons（192/512 の PNG）を public/ に追加する
+        // アイコンは `scripts/generate-icons.py` で再生成できる（依存ゼロ）。
+        icons: [
+          { src: "/icon-192.png", sizes: "192x192", type: "image/png" },
+          { src: "/icon-512.png", sizes: "512x512", type: "image/png" },
+          {
+            src: "/icon-512.png",
+            sizes: "512x512",
+            type: "image/png",
+            purpose: "maskable",
+          },
+        ],
       },
     }),
   ],
