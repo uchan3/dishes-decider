@@ -11,7 +11,8 @@
     "./shopping": "./src/shopping/index.ts",
     "./normalize": "./src/normalize/index.ts",
     "./similarity": "./src/similarity/index.ts",
-    "./extraction": "./src/extraction/index.ts"
+    "./extraction": "./src/extraction/index.ts",
+    "./tokens": "./src/tokens/index.ts"
   },
   "scripts": {
     "test": "vitest run",

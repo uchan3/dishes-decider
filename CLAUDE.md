@@ -9,6 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `docs/Weekly Menu Planner Spec.md` (v0.3) — 機能仕様・ドメインモデル・データモデル（PostgreSQL DDL 含む）・著作権制約
 - `docs/architecture.md` (v0.1) — システム構成・取り込みフロー・モノレポ構成・オフライン戦略
 - `docs/techstack_cost_analysis.md` (v0.1) — 技術選定の根拠（すべて決定済み）
+- `docs/ios-shortcut.md` — 取り込み導線（共有シート → Edge Function）のセットアップ手順とトラブルシュート
 
 これらの間で矛盾があれば `architecture.md` / `techstack_cost_analysis.md` の決定が優先。特に **Spec §9「技術スタック（案）」の Expo / React Native は古い案であり、確定スタックは PWA（Vite + React Router + Dexie.js）**。混同しないこと。
 
@@ -95,6 +96,7 @@ pnpm --filter @recipe-planner/web typecheck
 - Vite + React 19 + React Router v7 + vite-plugin-pwa。UI は `src/routes/`（Home=献立生成 / Library / RecipeDetail=`/recipe/:id` / Add=手動レシピ登録 / Shopping / Settings）、共通シェルは `src/components/Layout.tsx`（下部タブ）
 - レシピ詳細(`/recipe/:id`): 材料・原典リンク・タイトル/お気に入り/タグ編集・除外(「もう出さないで」)・削除(2段階確認)。手順は原典が YouTube なら iframe 埋め込み(`lib/youtube.ts`)、不可なら原典リンク(§3.6/§3.7)。編集/削除は `lib/recipeEdit.ts`。**`updateRecipe`/`deleteRecipe` は Supabase 設定時に Supabase も更新/削除**（Dexie だけ変更すると次回プルで巻き戻る/復活するため）
 - 手動レシピ登録は `src/lib/recipeForm.ts`（保存）＋ `src/lib/ingredients.ts`（core の `createIngredientIndex`/`matchIngredientMaster` を Dexie 行に当てる薄いアダプタ。未ヒットは新規マスタ作成、売場の初期値は `classifyIngredient`）
+- `src/lib/ingestTokens.ts` / `src/lib/importJobs.ts` / `components/IngestCard.tsx` — ショートカット用トークンの発行・失効と、取り込みジョブの状況表示（設定画面）。**生トークンは発行時に一度だけ表示**し DB にはハッシュのみ。`isStalled`（10 分以上 pending）は純粋関数でテスト有り
 - `src/lib/relink.ts` — `ingredient_id` が null の材料をマスタに再照合する保守処理（設定画面から実行）。S1 以前に取り込んだレシピを救済する。Dexie と Supabase の両方を更新
 - 注意: `recipes` の Dexie インデックスは `id, source_id, *dish_roles, last_cooked_at` のみ。`title` 等の非インデックス列で `orderBy` するとエラーになるため、メモリ内ソートする
 - `src/db/` — Dexie。**行は snake_case で保持**（Supabase と 1:1 同期のため）、`mappers.ts` で core の camelCase ドメイン型へ変換。IndexedDB は boolean をキーにできないため `is_checked` 等はインデックスせずメモリでフィルタ
@@ -114,6 +116,7 @@ pnpm --filter @recipe-planner/web typecheck
 - `src/generation/` — 献立生成。`generateMealPlan()` が入口。`rng.ts`(seeded RNG + softmax) / `scoring.ts`(F-02-2 の重み付け) / `generate.ts`(候補構築→フィルタ→サンプリング→多様性再抽選→制約緩和)。**乱数は注入可能**（テストは `mulberry32` で決定論化）
 - `src/shopping/` — 買い物リスト集約。`aggregateShoppingList()` が入口。`units.ts`(単位分類・換算 §5.3) / `aggregate.ts`(展開→スケール→グルーピング→合算→常備品除外→売場順ソート)
 - `src/normalize/` — 食材名の正規化。`name.ts`(`normalizeIngredientName()`: NFKC→ひらがな化→空白除去→小文字化) / `match.ts`(`createIngredientIndex`/`matchIngredientMaster`: 正規化キー＋`aliases` でマスタ照合。行型を持ち込まないため名前取り出し関数 `keysOf` を受ける) / `category.ts`(`classifyIngredient`: 辞書の**最長一致**で売場カテゴリ＋常備品フラグを推定。「冷凍◯◯」は先頭一致で frozen)。手動入力と抽出パイプラインが共有する
+- `src/tokens/` — ingest トークンの生成 (`generateIngestToken`) と SHA-256 ハッシュ (`hashIngestToken`)。**発行する PWA と照合する Edge Function が同じ実装を使うことが必須**なのでここに置く
 - `src/similarity/` — 文字 3-gram 類似度（§3.4）。`overlapRatio`/`checkSimilarity`、閾値 `SIMILARITY_THRESHOLDS`(私的0.6/公開0.4)。要約が原文表現をなぞっていないかの機械検査
 - `src/extraction/` — レシピ抽出の**共有型・純粋ロジック**（Deno の Edge Function から利用）。`types.ts`(`ExtractionProvider` 抽象/結果型) / `jsonld.ts`(schema.org/Recipe 直接マッピング=Tier0・LLM不要) / `gate.ts`(`applySimilarityGate`: 超過なら再生成最大2回→破棄) / `html.ts`(JSON-LD ブロック抽出・本文テキスト化、DOM非依存) / `youtube.ts`(watch HTML から概要欄`shortDescription`/タイトル抽出。概要欄は`<script>`内で htmlToText では落ちるため専用) / `url.ts`(`validateExternalUrl`: SSRF 判定) / `source.ts`(`deriveSource`: 原典 URL＋ヒントから収集元を同定。YouTube はチャンネル ID、Web はホスト名が `identifier`) / `prompt.ts`(**Gemini responseSchema 互換**の出力スキーマ＋プロンプト)
 - `src/testing.ts` — テスト専用ファクトリ（`index.ts` からは公開しない）
@@ -123,7 +126,7 @@ pnpm --filter @recipe-planner/web typecheck
 - `_shared/fetch.ts`(SSRF再検証付き安全fetch: リダイレクト手動追跡・タイムアウト・サイズ上限) / `_shared/pipeline.ts`(取得→JSON-LD高速経路 or LLM抽出→類似度ゲート→原文破棄) / `_shared/providers/`(`gemini.ts` 実装・`mock.ts` キー無しローカル検証用) / `_shared/provider-select.ts`(`GEMINI_API_KEY` があれば Gemini、無ければ Mock) / `ingest/index.ts`(POST /ingest: 即202 + `EdgeRuntime.waitUntil()`)
 - core は `deno.json` の import map で `@recipe-planner/core/extraction` 等を相対 `.ts` にエイリアス
 - `_shared/db.ts`(サービスロールで DB 操作。トークン照合(SHA-256 ハッシュ)・レート制限・`import_jobs`・`recipes`/`recipe_ingredients` 挿入)。挿入時に **`ensureSource`(収集元を同定/作成 → `source_id`)** と **`resolveIngredientIds`(core の索引でマスタ照合、未登録は `classifyIngredient` でカテゴリ推定して作成 → `ingredient_id`)** を通す。ここが埋まらないと買い物リストが全部「その他」に落ちる
-- **未実装**: ingest トークンの発行 UI（現状 DB に直接 INSERT）、10 分以上 `pending` のジョブを再実行する pg_cron
+- ingest トークンは **PWA の設定画面から発行**（`lib/ingestTokens.ts`。生成・ハッシュは core の `tokens` を Edge と共有するので照合がずれない）。10 分以上 `pending` のジョブは `fail_stalled_import_jobs()` を pg_cron が 5 分ごとに呼んで failed に落とす（PWA 側も 10 分経過を「停止」と表示する）
 - **deno 未インストールのため Deno 側は型チェック未実施**。純粋ロジック(SSRF/JSON-LD/ゲート/HTML)は core に置き vitest でカバー済み
 
 ## 実装の優先順位

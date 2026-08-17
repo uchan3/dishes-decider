@@ -2,6 +2,7 @@
   "imports": {
     "@recipe-planner/core/extraction": "../../packages/core/src/extraction/index.ts",
     "@recipe-planner/core/normalize": "../../packages/core/src/normalize/index.ts",
+    "@recipe-planner/core/tokens": "../../packages/core/src/tokens/index.ts",
     "@recipe-planner/core/similarity": "../../packages/core/src/similarity/index.ts"
   }
 }
