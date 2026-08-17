@@ -76,6 +76,8 @@ function buildWeekPlan(startDate: string, weekday: WeekdayTemplates): DayPlan[] 
       slotId: `${date}#${role}#${idx}`,
       dishRole: role,
       isWeekend: isWeekend(date),
+      // 同じ日の中で同じ料理が重複しないように、日付を食事 ID として渡す。
+      mealId: date,
     }));
     days.push({ date, templateId, slots });
   }
@@ -231,6 +233,7 @@ async function reshuffleSlots(
       slotId: slot.id,
       dishRole: slot.dish_role,
       isWeekend: isWeekend(date),
+      mealId: date,
     })),
     recipes,
     referenceDate: today(),

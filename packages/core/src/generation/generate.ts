@@ -6,7 +6,7 @@
  *
  * 手順:
  *   1. 候補プール構築（dish_role が合致）
- *   2. ハードフィルタ（クールダウン / 除外 / 同一週重複 / 調理時間上限）
+ *   2. ハードフィルタ（クールダウン / 除外 / 同一週重複 / 同一食事内重複 / 調理時間上限）
  *   3. スコアリング（{@link scoreRecipe}）
  *   4. softmax で確率的サンプリング
  *   5. 多様性チェック（週内の主要食材の偏りを是正、最大リトライ）
@@ -25,6 +25,14 @@ export interface SlotRequest {
   isWeekend: boolean;
   /** ロック済みなら固定するレシピ ID。指定時はそのまま採用され再抽選されない。 */
   lockedRecipeId?: string | null;
+  /**
+   * 同じ食事（同じ日の献立）に属するスロットをまとめる ID。
+   *
+   * **同一食事内での重複は制約緩和の対象にしない**。候補が足りないときに同じ週へ
+   * 同じ料理が複数回出るのは許容できるが、同じ日の主菜と副菜が同じ料理になるのは
+   * 献立として成立しないため。未指定なら食事単位の重複判定は行わない。
+   */
+  mealId?: string;
 }
 
 /** 生成設定。 */
@@ -126,6 +134,7 @@ function filterCandidates(
   slot: SlotRequest,
   recipes: readonly Recipe[],
   used: ReadonlySet<string>,
+  usedInMeal: ReadonlySet<string>,
   excluded: ReadonlySet<string>,
   referenceDate: string,
   settings: GenerationSettings,
@@ -135,6 +144,7 @@ function filterCandidates(
   return recipes.filter((r) => {
     if (!r.dishRoles.includes(slot.dishRole)) return false;
     if (r.isExcluded) return false; // 「もう出さないで」は緩和しない
+    if (usedInMeal.has(r.id)) return false; // 同じ食事の中での重複も緩和しない
     if (excluded.has(r.id)) return false;
     if (!relax.sameWeekDuplicate && used.has(r.id)) return false;
     if (
@@ -164,6 +174,7 @@ function buildCandidates(
   slot: SlotRequest,
   recipes: readonly Recipe[],
   used: ReadonlySet<string>,
+  usedInMeal: ReadonlySet<string>,
   excluded: ReadonlySet<string>,
   referenceDate: string,
   settings: GenerationSettings,
@@ -175,6 +186,7 @@ function buildCandidates(
     slot,
     recipes,
     used,
+    usedInMeal,
     excluded,
     referenceDate,
     settings,
@@ -191,6 +203,7 @@ function buildCandidates(
       slot,
       recipes,
       used,
+      usedInMeal,
       excluded,
       referenceDate,
       settings,
@@ -262,9 +275,22 @@ export function generateMealPlan(input: GenerateInput): GenerateResult {
   const excluded = new Set(input.excludeRecipeIds ?? []);
 
   const used = new Set<string>();
+  /** 食事 ID → その食事で既に使ったレシピ。同一食事内の重複を防ぐ。 */
+  const usedByMeal = new Map<string, Set<string>>();
   const selected: Recipe[] = [];
   const assignments: SlotAssignment[] = [];
   const relaxations = new Set<RelaxedConstraint>();
+
+  /** スロットが属する食事の使用済み集合（`mealId` 未指定なら空集合）。 */
+  const mealSet = (slot: SlotRequest): Set<string> => {
+    if (slot.mealId === undefined) return new Set();
+    let set = usedByMeal.get(slot.mealId);
+    if (!set) {
+      set = new Set();
+      usedByMeal.set(slot.mealId, set);
+    }
+    return set;
+  };
 
   // 1) ロック済みスロットを先に確定（同一週重複判定・多様性算出に含める）。
   for (const slot of input.slots) {
@@ -278,6 +304,7 @@ export function generateMealPlan(input: GenerateInput): GenerateResult {
     });
     if (recipe) {
       used.add(recipe.id);
+      mealSet(slot).add(recipe.id);
       selected.push(recipe);
     }
   }
@@ -289,6 +316,7 @@ export function generateMealPlan(input: GenerateInput): GenerateResult {
       slot,
       input.recipes,
       used,
+      mealSet(slot),
       excluded,
       input.referenceDate,
       settings,
@@ -304,12 +332,23 @@ export function generateMealPlan(input: GenerateInput): GenerateResult {
     });
     if (pick) {
       used.add(pick.id);
+      mealSet(slot).add(pick.id);
       selected.push(pick);
     }
   }
 
   // 5) 多様性チェック: 過剰カテゴリのスロットを再抽選（最大リトライ）。
-  applyVarietyRetries(input, settings, rng, byId, excluded, used, selected, assignments);
+  applyVarietyRetries(
+    input,
+    settings,
+    rng,
+    byId,
+    excluded,
+    used,
+    usedByMeal,
+    selected,
+    assignments,
+  );
 
   const unfilledSlotIds = assignments
     .filter((a) => a.recipeId === null)
@@ -333,6 +372,7 @@ function applyVarietyRetries(
   byId: ReadonlyMap<string, Recipe>,
   excluded: ReadonlySet<string>,
   used: Set<string>,
+  usedByMeal: Map<string, Set<string>>,
   selected: Recipe[],
   assignments: SlotAssignment[],
 ): void {
@@ -355,6 +395,8 @@ function applyVarietyRetries(
     // 現在のレシピを一旦外し、過剰カテゴリを避けた候補から選び直す。
     const current = byId.get(target.recipeId);
     used.delete(target.recipeId);
+    const mealUsed = slot.mealId === undefined ? new Set<string>() : usedByMeal.get(slot.mealId);
+    mealUsed?.delete(target.recipeId);
     const idx = selected.findIndex((r) => r.id === target.recipeId);
     if (idx >= 0) selected.splice(idx, 1);
 
@@ -362,6 +404,7 @@ function applyVarietyRetries(
       slot,
       input.recipes,
       used,
+      mealUsed ?? new Set<string>(),
       excluded,
       input.referenceDate,
       settings,
@@ -376,6 +419,7 @@ function applyVarietyRetries(
     const chosen = pick ?? current ?? null;
     if (chosen) {
       used.add(chosen.id);
+      mealUsed?.add(chosen.id);
       selected.push(chosen);
       target.recipeId = chosen.id;
     }

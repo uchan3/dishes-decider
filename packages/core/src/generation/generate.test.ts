@@ -150,3 +150,68 @@ describe("generateMealPlan", () => {
     expect(result.assignments[0]?.recipeId).toBe("b");
   });
 });
+
+describe("同一食事内の重複（mealId）", () => {
+  /** 同じ日（mealId 共通）の主菜 + 副菜 2 枠。 */
+  const oneDay: SlotRequest[] = [
+    { slotId: "d1-main", dishRole: "main", isWeekend: false, mealId: "d1" },
+    { slotId: "d1-side1", dishRole: "side", isWeekend: false, mealId: "d1" },
+    { slotId: "d1-side2", dishRole: "side", isWeekend: false, mealId: "d1" },
+  ];
+
+  it("never puts the same recipe twice in one meal, even when candidates run out", () => {
+    // 副菜が 1 件しかないので、同一週重複の緩和が起きる状況。
+    const recipes = [
+      makeRecipe({ id: "m1", dishRoles: ["main"] }),
+      makeRecipe({ id: "s1", dishRoles: ["side"] }),
+    ];
+    const result = generateMealPlan({
+      slots: oneDay,
+      recipes,
+      referenceDate: REF,
+      rng: mulberry32(3),
+    });
+
+    const picked = result.assignments.map((a) => a.recipeId).filter((id) => id !== null);
+    expect(new Set(picked).size).toBe(picked.length);
+    // 埋められない枠は「同じ料理を 2 つ出す」より空のままにする。
+    expect(result.unfilledSlotIds).toEqual(["d1-side2"]);
+  });
+
+  it("still allows the same recipe on different days", () => {
+    const recipes = [makeRecipe({ id: "s1", dishRoles: ["side"] })];
+    const slots: SlotRequest[] = [
+      { slotId: "d1-side", dishRole: "side", isWeekend: false, mealId: "d1" },
+      { slotId: "d2-side", dishRole: "side", isWeekend: false, mealId: "d2" },
+    ];
+    const result = generateMealPlan({ slots, recipes, referenceDate: REF, rng: mulberry32(4) });
+
+    expect(result.assignments.map((a) => a.recipeId)).toEqual(["s1", "s1"]);
+    expect(result.relaxations).toContain("same_week_duplicate");
+  });
+
+  it("does not reuse a locked recipe elsewhere in the same meal", () => {
+    const recipes = [
+      makeRecipe({ id: "s1", dishRoles: ["side"] }),
+      makeRecipe({ id: "s2", dishRoles: ["side"] }),
+    ];
+    const slots: SlotRequest[] = [
+      { slotId: "d1-a", dishRole: "side", isWeekend: false, mealId: "d1", lockedRecipeId: "s1" },
+      { slotId: "d1-b", dishRole: "side", isWeekend: false, mealId: "d1" },
+    ];
+    const result = generateMealPlan({ slots, recipes, referenceDate: REF, rng: mulberry32(5) });
+
+    const second = result.assignments.find((a) => a.slotId === "d1-b");
+    expect(second?.recipeId).toBe("s2");
+  });
+
+  it("behaves as before when mealId is omitted", () => {
+    const recipes = [makeRecipe({ id: "s1", dishRoles: ["side"] })];
+    const slots: SlotRequest[] = [
+      { slotId: "a", dishRole: "side", isWeekend: false },
+      { slotId: "b", dishRole: "side", isWeekend: false },
+    ];
+    const result = generateMealPlan({ slots, recipes, referenceDate: REF, rng: mulberry32(6) });
+    expect(result.assignments.map((a) => a.recipeId)).toEqual(["s1", "s1"]);
+  });
+});
