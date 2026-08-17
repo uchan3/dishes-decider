@@ -401,8 +401,8 @@ export function SettingsPage() {
       <div className="card">
         <h2>今後実装予定</h2>
         <ul className="muted">
-          <li>買い物リストへの手動追加</li>
           <li>食材マスタの統合（表記ゆれのマージ）</li>
+          <li>献立・買い物リストの端末間同期</li>
         </ul>
       </div>
     </section>

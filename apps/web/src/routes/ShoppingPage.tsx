@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import type { IngredientCategory } from "@recipe-planner/core";
 import { db, type ShoppingItemRow } from "../db/schema.ts";
 import { startOfWeek, today } from "../lib/date.ts";
 import {
+  addManualItem,
   clearChecked,
   pantryIngredientIds,
+  removeShoppingItem,
   setItemChecked,
   syncShoppingList,
 } from "../lib/shopping.ts";
@@ -35,6 +37,24 @@ export function ShoppingPage() {
 
   const [includePantry, setIncludePantry] = useState(false);
   const [syncing, setSyncing] = useState(false);
+
+  // 手動追加フォーム（US-13）。
+  const [newName, setNewName] = useState("");
+  const [newQuantity, setNewQuantity] = useState("");
+  const [newUnit, setNewUnit] = useState("");
+
+  function handleAdd(e: FormEvent) {
+    e.preventDefault();
+    const quantity = newQuantity.trim() === "" ? null : Number(newQuantity);
+    void addManualItem(planId, {
+      displayName: newName,
+      quantity: quantity !== null && Number.isFinite(quantity) ? quantity : null,
+      unit: newUnit,
+    });
+    setNewName("");
+    setNewQuantity("");
+    setNewUnit("");
+  }
 
   const householdSize = useLiveQuery(async () => (await loadPlanningSettings()).householdSize, []);
 
@@ -70,6 +90,45 @@ export function ShoppingPage() {
 
   const hiddenPantryCount = (items ?? []).length - visible.length;
 
+  /** 献立が無いときに表示する手動追加分。 */
+  const manualItems = (items ?? []).filter((row) => row.is_manual);
+
+  /** 追加フォーム。献立の有無にかかわらず出す。 */
+  const addForm = (
+    <form className="add-item" onSubmit={handleAdd}>
+      <h2 className="shop-group__head">買うものを追加</h2>
+      <div className="add-item__row">
+        <input
+          className="add-item__name"
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          placeholder="牛乳・トイレットペーパーなど"
+          aria-label="品名"
+        />
+        <input
+          className="add-item__qty"
+          type="number"
+          step="any"
+          min="0"
+          value={newQuantity}
+          onChange={(e) => setNewQuantity(e.target.value)}
+          placeholder="1"
+          aria-label="数量"
+        />
+        <input
+          className="add-item__unit"
+          value={newUnit}
+          onChange={(e) => setNewUnit(e.target.value)}
+          placeholder="本"
+          aria-label="単位"
+        />
+        <button type="submit" className="btn btn--primary" disabled={newName.trim() === ""}>
+          追加
+        </button>
+      </div>
+    </form>
+  );
+
   const grouped = useMemo(() => {
     const map = new Map<IngredientCategory, ShoppingItemRow[]>();
     for (const row of visible) {
@@ -80,6 +139,8 @@ export function ShoppingPage() {
     return map;
   }, [visible]);
 
+  // 献立がまだ無くても、買い足したい品は登録できるようにする（US-13）。
+  // 後で献立を作ると、手動項目を保ったまま材料が足される。
   if (!plan) {
     return (
       <section>
@@ -87,9 +148,40 @@ export function ShoppingPage() {
         <div className="empty">
           <p>今週の献立がまだありません。</p>
           <p className="muted">
-            <Link to="/">献立</Link> を生成すると買い物リストが作られます。
+            <Link to="/">献立</Link> を生成すると材料が追加されます。
           </p>
         </div>
+        {manualItems.length > 0 && (
+          <ul className="shop-list">
+            {manualItems.map((row) => (
+              <li
+                key={row.id}
+                className={row.is_checked ? "shop-item shop-item--done" : "shop-item"}
+              >
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={row.is_checked}
+                    onChange={(e) => void setItemChecked(row.id, e.target.checked)}
+                  />
+                  <span className="shop-item__name">{row.display_name}</span>
+                  <span className="shop-item__qty">
+                    {row.quantity !== null && `${row.quantity}${row.unit ?? ""}`}
+                  </span>
+                </label>
+                <button
+                  className="icon-btn"
+                  title="削除"
+                  aria-label={`${row.display_name} を削除`}
+                  onClick={() => void removeShoppingItem(row.id)}
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {addForm}
       </section>
     );
   }
@@ -153,12 +245,24 @@ export function ShoppingPage() {
                       )}
                     </span>
                   </label>
+                  {row.is_manual && (
+                    <button
+                      className="icon-btn"
+                      title="削除"
+                      aria-label={`${row.display_name} を削除`}
+                      onClick={() => void removeShoppingItem(row.id)}
+                    >
+                      ×
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>
           </div>
         );
       })}
+
+      {addForm}
     </section>
   );
 }
