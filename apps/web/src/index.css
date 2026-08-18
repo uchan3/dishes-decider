@@ -955,6 +955,26 @@ a {
   text-align: right;
 }
 
+/* --- ソース名のインライン編集 --- */
+.source-rename {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.source-rename input {
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  min-width: 0;
+  flex: 1;
+}
+
 /* --- 食材マスタの統合 --- */
 .merge-list {
   list-style: none;
