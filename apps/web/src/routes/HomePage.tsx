@@ -103,7 +103,8 @@ export function HomePage() {
         <div className="empty">
           <p>レシピがまだありません。</p>
           <p className="muted">
-            <Link to="/settings">設定</Link> からサンプルデータを投入すると献立を生成できます。
+            <Link to="/add">レシピを追加</Link> から登録するか、iOS
+            ショートカットで取り込むと献立を生成できます。
           </p>
         </div>
       </section>

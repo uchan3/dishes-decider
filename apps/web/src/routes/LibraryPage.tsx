@@ -85,7 +85,8 @@ export function LibraryPage() {
         <div className="empty">
           <p>レシピがまだありません。</p>
           <p className="muted">
-            <Link to="/settings">設定</Link> からサンプルデータを投入できます。
+            <Link to="/add">レシピを追加</Link> から登録するか、iOS
+            ショートカットで取り込めます（設定 → 取り込み）。
           </p>
         </div>
       </section>

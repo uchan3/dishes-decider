@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import type { IngredientCategory } from "@recipe-planner/core";
 import { db } from "../db/schema.ts";
-import { seedSampleData } from "../db/seed.ts";
 import {
   TEMPLATES,
   WEEKDAY_LABELS,
@@ -21,6 +20,7 @@ import { useAuth } from "../lib/auth.tsx";
 import { pullLibrary } from "../lib/sync.ts";
 import { relinkIngredients } from "../lib/relink.ts";
 import { setSourceEnabled } from "../lib/sources.ts";
+import { relinkSources, renameSource } from "../lib/relinkSources.ts";
 import { IngestCard } from "../components/IngestCard.tsx";
 import { MergeIngredientsCard } from "../components/MergeIngredientsCard.tsx";
 import { pendingCount } from "../lib/outbox.ts";
@@ -58,7 +58,6 @@ const KIND_LABEL: Record<string, string> = {
 
 /** 設定画面。ソース管理（生成対象トグル）と開発用データ操作。 */
 export function SettingsPage() {
-  const recipeCount = useLiveQuery(() => db.recipes.count(), [], 0);
   const sources = useLiveQuery(() => db.sources.toArray(), []);
   const countBySource = useLiveQuery(async () => {
     const rows = await db.recipes.toArray();
@@ -83,6 +82,12 @@ export function SettingsPage() {
   }, []);
   const { configured, session, userId, signOut } = useAuth();
 
+  /** ソースが割り当たっていないレシピ（原典 URL はあるのに未割当）の数。 */
+  const unsourcedCount = useLiveQuery(async () => {
+    const rows = await db.recipes.toArray();
+    return rows.filter((r) => r.source_id === null && r.source_url !== null).length;
+  }, []);
+
   /** まだ Supabase に送れていない変更の数（オフライン中に溜まる）。 */
   const unsentCount = useLiveQuery(() => pendingCount(), []);
 
@@ -94,6 +99,9 @@ export function SettingsPage() {
 
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  /** 名前を編集中のソース ID（インライン編集。ダイアログは使わない）。 */
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameText, setRenameText] = useState("");
 
   async function handleSync() {
     setBusy(true);
@@ -158,31 +166,30 @@ export function SettingsPage() {
     void saveWeekdayTemplates(next);
   }
 
-  async function handleSeed() {
+  async function handleRelinkSources() {
     setBusy(true);
     try {
-      const n = await seedSampleData();
-      setMessage(`サンプルレシピ ${n} 件を投入しました。`);
+      const r = await relinkSources(userId);
+      setMessage(
+        r.scanned === 0
+          ? "ソース未割り当てのレシピはありませんでした。"
+          : `${r.linked} 件のレシピにソースを割り当てました（新規ソース ${r.created} 件）。`,
+      );
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "割り当てに失敗しました");
     } finally {
       setBusy(false);
     }
   }
 
-  async function handleClear() {
-    setBusy(true);
-    try {
-      await Promise.all([
-        db.sources.clear(),
-        db.ingredients.clear(),
-        db.recipes.clear(),
-        db.recipeIngredients.clear(),
-        db.mealPlans.clear(),
-        db.shoppingItems.clear(),
-      ]);
-      setMessage("全データを消去しました。");
-    } finally {
-      setBusy(false);
-    }
+  /** ソース名の変更を確定する（取り込み時にチャンネル名が取れていない場合に手で直す）。 */
+  function saveSourceName() {
+    if (renamingId === null) return;
+    const id = renamingId;
+    setRenamingId(null);
+    void renameSource(id, renameText).catch((e: unknown) => {
+      setMessage(e instanceof Error ? e.message : "名前の変更に失敗しました");
+    });
   }
 
   function toggleSource(id: string, next: boolean) {
@@ -336,6 +343,17 @@ export function SettingsPage() {
       <div className="card">
         <h2>ソース</h2>
         <p className="muted">オフにしたソースのレシピは献立生成から除外されます。</p>
+        {unsourcedCount !== undefined && unsourcedCount > 0 && (
+          <div className="notice notice--warn">
+            <p>
+              原典 URL はあるのにソースが割り当たっていないレシピが {unsourcedCount} 件あります
+              （ソースの自動作成に対応する前に取り込んだもの）。
+            </p>
+            <button onClick={handleRelinkSources} disabled={busy} className="btn">
+              ソースを割り当てる
+            </button>
+          </div>
+        )}
         {!sources ? (
           <p className="muted">読み込み中…</p>
         ) : sources.length === 0 ? (
@@ -345,7 +363,37 @@ export function SettingsPage() {
             {sources.map((s) => (
               <li key={s.id} className="source-item">
                 <div className="source-item__main">
-                  <span className="source-item__name">{s.name}</span>
+                  {renamingId === s.id ? (
+                    <div className="source-rename">
+                      <input
+                        value={renameText}
+                        onChange={(e) => setRenameText(e.target.value)}
+                        aria-label="ソースの表示名"
+                        autoFocus
+                      />
+                      <button className="btn btn--primary" onClick={saveSourceName}>
+                        保存
+                      </button>
+                      <button className="btn" onClick={() => setRenamingId(null)}>
+                        やめる
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="source-item__name">
+                      {s.name}
+                      <button
+                        className="icon-btn"
+                        title="名前を変更"
+                        aria-label={`${s.name} の名前を変更`}
+                        onClick={() => {
+                          setRenameText(s.name);
+                          setRenamingId(s.id);
+                        }}
+                      >
+                        ✎
+                      </button>
+                    </span>
+                  )}
                   <span className="source-item__meta">
                     {KIND_LABEL[s.kind] ?? s.kind}
                     {" ・ "}
@@ -420,19 +468,7 @@ export function SettingsPage() {
         )}
       </div>
 
-      <div className="card">
-        <h2>開発用データ</h2>
-        <p className="muted">現在のレシピ件数: {recipeCount}</p>
-        <div className="btn-row">
-          <button onClick={handleSeed} disabled={busy} className="btn btn--primary">
-            サンプルデータを投入
-          </button>
-          <button onClick={handleClear} disabled={busy} className="btn btn--danger">
-            全データを消去
-          </button>
-        </div>
-        {message && <p className="notice">{message}</p>}
-      </div>
+      {message && <p className="notice">{message}</p>}
 
       <div className="card">
         <h2>今後実装予定</h2>

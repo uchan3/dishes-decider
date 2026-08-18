@@ -103,6 +103,7 @@ pnpm --filter @recipe-planner/web typecheck
 - `src/lib/ingestTokens.ts` / `src/lib/importJobs.ts` / `components/IngestCard.tsx` — ショートカット用トークンの発行・失効と、取り込みジョブの状況表示（設定画面）。**生トークンは発行時に一度だけ表示**し DB にはハッシュのみ。`isStalled`（10 分以上 pending）は純粋関数でテスト有り
 - `src/lib/recipeSearch.ts` — ライブラリの検索・絞り込み・並べ替え(F-01-3)。`filterRecipes` は純粋関数（テスト有り）。検索は**タイトル・タグ・材料名**が対象で、照合は `normalizeIngredientName` を通すのでカナ/空白の揺れを吸収する。絞り込みは役割・ソース・調理時間・お気に入り（**調理時間が不明なレシピは落とさない**）
 - `src/lib/ingredientMerge.ts` — 食材マスタの統合(§5.3)。`mergeIngredients` が材料行・買い物リスト項目の参照を付け替え、消える側の名前を `aliases` に引き継いで削除する（送信キュー経由で Supabase にも反映。削除は最後に送る）。候補提示 `suggestMerges` は**わざと保守的**で、正規化キー一致か「同カテゴリで名前を丸ごと含む」場合のみ。3-gram 類似度は「牛こま切れ肉/豚こま切れ肉」を似ていると誤判定するため使わない
+- `src/lib/relinkSources.ts` — S1（取り込み時のソース自動作成）より前に取り込んだレシピに、原典 URL から収集元を割り当てる保守処理。設定画面のソース欄に未割当件数と実行ボタンを出す。`renameSource` でソース名の変更もできる（**YouTube のチャンネルは URL だけでは分からないため既存分は「YouTube」1 つにまとまる**。チャンネル別に分かれるのは `YOUTUBE_API_KEY` 設定済みの新規取り込みのみ）
 - `src/lib/relink.ts` — `ingredient_id` が null の材料をマスタに再照合する保守処理（設定画面から実行）。S1 以前に取り込んだレシピを救済する。Dexie と Supabase の両方を更新
 - 注意: `recipes` の Dexie インデックスは `id, source_id, *dish_roles, last_cooked_at` のみ。`title` 等の非インデックス列で `orderBy` するとエラーになるため、メモリ内ソートする
 - `src/db/` — Dexie。**行は snake_case で保持**（Supabase と 1:1 同期のため）、`mappers.ts` で core の camelCase ドメイン型へ変換。IndexedDB は boolean をキーにできないため `is_checked` 等はインデックスせずメモリでフィルタ
@@ -112,7 +113,6 @@ pnpm --filter @recipe-planner/web typecheck
 - 曜日ごとの献立構成(US-07): `lib/mealTemplates.ts`（プリセット6種＋月起点の週割り当て）＋ `lib/settings.ts`（Dexie の `settings` KVストア。schema **v2** で追加）。設定画面で曜日別にテンプレ選択。`eat_out`(空スロット) の日は `is_skipped` の Meal になり生成対象外
 - 生成設定(F-02-1): `lib/settings.ts` の `PlanningSettings`（世帯人数・クールダウン日数・平日/休日の調理時間上限）。既定は仕様表どおり **平日 30 分・休日制限なし・クールダウン 14 日**。保存・読み込みは必ず `normalizePlanningSettings`（純粋関数・テスト有り）を通し、壊れた値が生成ロジックに流れないようにする。`generateWeek`/再抽選が core の `settings` に写して渡し、買い物リストの人数スケーリングにも使う
 - 常備品(US-10): 設定画面の食材マスタ一覧でトグル（`setPantryStaple`）。買い物リストは常備品も保存しつつ既定で非表示にする
-- `src/db/seed.ts` — 開発用サンプルデータ（抽出パイプライン未実装のため。設定画面から投入）
 - **Supabase 連携（レシピライブラリのみ）**: `lib/supabase.ts`(クライアント・`VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY`) / `lib/auth.tsx`(メール＋パスワード認証コンテキスト) / `AppGate.tsx`(未認証はログイン画面、認証時に同期起動) / `lib/sync.ts`(`pullLibrary`: recipes/sources/ingredients を Supabase→Dexie に一方向プル、`subscribeImports`: import_jobs の Realtime で取り込み完了時に再プル)。**UI は常に Dexie から読む**（Supabase は同期元）。env 未設定ならログインを出さずローカル Dexie のみで動作
 - **書き戻し（Dexie → Supabase）は送信キュー経由**（`lib/outbox.ts` / `lib/outboxSync.ts`、architecture §5.1）。レシピ編集/削除・ソースの有効無効・常備品フラグ・手動レシピ登録・食材の再照合はすべて **Dexie に書く → `outbox` に積む → オンライン時に流す**。オフラインでも操作は成功する
   - 送るのは差分でなく**現在の行**（state-based）。同じ行の連続編集は `coalesceOutbox` で 1 件に畳む。1 件失敗したらそこで止め、指数バックオフで再試行（起点は 起動時 / `online` イベント / バックオフ）
