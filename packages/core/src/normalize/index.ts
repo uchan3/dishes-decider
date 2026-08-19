@@ -7,6 +7,7 @@
  */
 
 export { normalizeIngredientName } from "./name.ts";
+export { stripAmountFromIngredientName } from "./amount.ts";
 export {
   createIngredientIndex,
   matchIngredientMaster,

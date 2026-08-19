@@ -54,3 +54,26 @@ describe("createIngredientIndex", () => {
     expect(index.match("塩")).toBe(withBlank);
   });
 });
+
+describe("分量込みで登録された名前との照合", () => {
+  it("matches a name that still carries its amount", () => {
+    // 抽出が「にんにく 1かけ」を返しても、既存の「にんにく」に寄せたい。
+    const garlic: Row = { id: "ing-garlic", canonical_name: "にんにく", aliases: [] };
+    expect(matchIngredientMaster("にんにく 1かけ", [garlic], keysOf)).toBe(garlic);
+    expect(matchIngredientMaster("にんにく（1かけ）", [garlic], keysOf)).toBe(garlic);
+  });
+
+  it("matches a clean name against a master that was saved with an amount", () => {
+    // 逆向き。過去に「醤油 大さじ2」で作られてしまったマスタにも寄せられる。
+    const dirty: Row = { id: "ing-soy", canonical_name: "醤油 大さじ2", aliases: [] };
+    expect(matchIngredientMaster("醤油", [dirty], keysOf)).toBe(dirty);
+  });
+
+  it("still prefers an exact match over a stripped one", () => {
+    const clean: Row = { id: "ing-clean", canonical_name: "にんにく", aliases: [] };
+    const dirty: Row = { id: "ing-dirty", canonical_name: "にんにく 1かけ", aliases: [] };
+    const index = createIngredientIndex([dirty, clean], keysOf);
+    expect(index.match("にんにく 1かけ")).toBe(dirty);
+    expect(index.match("にんにく")).toBe(clean);
+  });
+});

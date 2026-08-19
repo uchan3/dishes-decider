@@ -7,7 +7,7 @@
  * 消える側の名前を残る側の `aliases` に取り込む（次回以降は照合でヒットする）。
  */
 
-import { normalizeIngredientName } from "@recipe-planner/core";
+import { normalizeIngredientName, stripAmountFromIngredientName } from "@recipe-planner/core";
 import { db, type IngredientRow } from "../db/schema.ts";
 import { enqueue } from "./outbox.ts";
 import { flushSoon } from "./outboxSync.ts";
@@ -84,13 +84,16 @@ export function suggestMerges(
       }
       if (reason === null) continue;
 
-      // 使用数が多い方を残す（同数なら名前が短い方＝より一般的な表記を残す）。
+      // 包含なら「含まれる側」＝より一般的な名前を残す（「にんにく 1かけ」ではなく
+      // 「にんにく」を残したい）。同名なら使用数が多い方、それも同じなら短い方を残す。
       const usageA = usageCount.get(a.id) ?? 0;
       const usageB = usageCount.get(b.id) ?? 0;
       const aWins =
-        usageA !== usageB
-          ? usageA > usageB
-          : a.canonical_name.length <= b.canonical_name.length;
+        reason === "contained"
+          ? nameA.length <= nameB.length
+          : usageA !== usageB
+            ? usageA > usageB
+            : a.canonical_name.length <= b.canonical_name.length;
       suggestions.push({ target: aWins ? a : b, source: aWins ? b : a, reason });
     }
   }
@@ -162,4 +165,75 @@ export async function mergeIngredients(
   flushSoon();
 
   return { relinked: relinkedLines.length, aliases };
+}
+
+/** 名前に分量が混ざったマスタ（「にんにく 1かけ」など）。 */
+export interface DirtyMaster {
+  master: IngredientRow;
+  /** 分量を落とした名前。 */
+  cleanName: string;
+}
+
+/**
+ * 名前に分量が混ざっているマスタを列挙する（純粋関数）。
+ *
+ * 抽出が `display_name` に分量を入れてしまった時期に作られた行を拾う。
+ */
+export function findDirtyMasters(masters: readonly IngredientRow[]): DirtyMaster[] {
+  const dirty: DirtyMaster[] = [];
+  for (const master of masters) {
+    const cleanName = stripAmountFromIngredientName(master.canonical_name);
+    if (normalizeIngredientName(cleanName) === normalizeIngredientName(master.canonical_name)) {
+      continue;
+    }
+    dirty.push({ master, cleanName });
+  }
+  return dirty;
+}
+
+/** 名前の整理結果。 */
+export interface TidyResult {
+  /** 対象だったマスタの数。 */
+  scanned: number;
+  /** 名前を直しただけの数。 */
+  renamed: number;
+  /** 既存のきれいなマスタに統合した数。 */
+  merged: number;
+}
+
+/**
+ * 名前に混ざった分量を取り除く保守処理。
+ *
+ * 同じ食材のきれいなマスタが既にあれば**そちらに統合**し、無ければ名前だけ直す。
+ * 統合は {@link mergeIngredients} を通すので、材料行・買い物リストの参照も付け替わる。
+ */
+export async function tidyIngredientNames(): Promise<TidyResult> {
+  const masters = await db.ingredients.toArray();
+  const dirty = findDirtyMasters(masters);
+  if (dirty.length === 0) return { scanned: 0, renamed: 0, merged: 0 };
+
+  // きれいな名前 → マスタ。統合先を探すのに使う。
+  const byCleanKey = new Map<string, IngredientRow>();
+  for (const master of masters) {
+    const key = normalizeIngredientName(master.canonical_name);
+    if (!byCleanKey.has(key)) byCleanKey.set(key, master);
+  }
+
+  let renamed = 0;
+  let merged = 0;
+  for (const { master, cleanName } of dirty) {
+    const target = byCleanKey.get(normalizeIngredientName(cleanName));
+    if (target && target.id !== master.id) {
+      await mergeIngredients(target.id, master.id);
+      merged++;
+      continue;
+    }
+    await db.ingredients.update(master.id, { canonical_name: cleanName });
+    await enqueue("ingredients", master.id, "put");
+    byCleanKey.set(normalizeIngredientName(cleanName), { ...master, canonical_name: cleanName });
+    renamed++;
+  }
+  flushSoon();
+
+  return { scanned: dirty.length, renamed, merged };
 }

@@ -17,6 +17,7 @@ import {
   classifyIngredient,
   createIngredientIndex,
   normalizeIngredientName,
+  stripAmountFromIngredientName,
 } from "@recipe-planner/core/normalize";
 import { hashIngestToken } from "@recipe-planner/core/tokens";
 
@@ -178,9 +179,11 @@ async function resolveIngredientIds(
   // 未登録の食材を集める（同一レシピ内の重複は正規化キーで 1 つに畳む）。
   const pending = new Map<string, { name: string; unit: string | null }>();
   for (const ing of ingredients) {
-    const name = ing.displayName.trim();
+    // 抽出が「にんにく 1かけ」のように分量込みの名前を返すことがある。マスタ名は
+    // 分量を落として作る（そのまま作ると「にんにく」と別物になり合算されない）。
+    const name = stripAmountFromIngredientName(ing.displayName);
     const key = normalizeIngredientName(name);
-    if (key === "" || pending.has(key) || index.match(name)) continue;
+    if (key === "" || pending.has(key) || index.match(ing.displayName)) continue;
     pending.set(key, { name, unit: ing.unit });
   }
 
@@ -208,7 +211,7 @@ async function resolveIngredientIds(
     }
   }
 
-  return ingredients.map((ing) => index.match(ing.displayName.trim())?.id ?? null);
+  return ingredients.map((ing) => index.match(ing.displayName)?.id ?? null);
 }
 
 /**
