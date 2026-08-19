@@ -53,6 +53,19 @@ Safari / YouTube / Instagram の共有シート → 作ったショートカッ�
 Edge Function は即 202 を返すので、**ショートカットは数秒で完了する**（抽出は裏で 5〜15 秒かかる）。
 取り込みが終わると PWA 側に Realtime で届き、レシピライブラリに増える。
 
+## 取り込みの中身を変えたとき（開発者向け）
+
+`supabase/functions/` を直しただけでは本番に反映されない。Cloudflare のビルドが配信するのは
+PWA だけで、Edge Function は別系統のデプロイが要る。
+
+```bash
+supabase functions deploy ingest --project-ref mprrxclyflfhkwxocbtb
+```
+
+main への push では CI（`.github/workflows/ci.yml` の `deploy edge functions`）が自動で行う。
+リポジトリの Secrets に `SUPABASE_ACCESS_TOKEN` が無い場合はスキップされるので、その場合は上の
+コマンドを手で実行する。
+
 ## うまくいかないとき
 
 PWA の 設定 →「取り込み（iOS ショートカット）」→ **取り込み状況** を見る。
