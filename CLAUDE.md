@@ -136,6 +136,8 @@ pnpm --filter @recipe-planner/web typecheck
 - 注意: core の tsconfig は `lib: ["ES2022","WebWorker"]`。`URL`/`fetch` 等の Web 標準グローバルの型のみ入れ、`document`/`window` は含めない（DOM フリー規律を維持）
 
 ### supabase/functions（Deno・抽出パイプライン）
+- **デプロイは Cloudflare とは別系統**。Workers Builds が配信するのは PWA だけで、Edge Function は `supabase functions deploy ingest` が要る。main への push で CI が自動デプロイする（`SUPABASE_ACCESS_TOKEN` が未設定ならスキップ）。**関数を直したのに本番の挙動が変わらないときは、まずデプロイされているかを疑う**
+- DB マイグレーションは自動化していない（影響が大きいため）。`supabase db push` を手動で実行する
 - `_shared/fetch.ts`(SSRF再検証付き安全fetch: リダイレクト手動追跡・タイムアウト・サイズ上限) / `_shared/pipeline.ts`(取得→JSON-LD高速経路 or LLM抽出→類似度ゲート→原文破棄) / `_shared/providers/`(`gemini.ts` 実装・`mock.ts` キー無しローカル検証用) / `_shared/provider-select.ts`(`GEMINI_API_KEY` があれば Gemini、無ければ Mock) / `ingest/index.ts`(POST /ingest: 即202 + `EdgeRuntime.waitUntil()`)
 - core は `deno.json` の import map で `@recipe-planner/core/extraction` 等を相対 `.ts` にエイリアス
 - `_shared/db.ts`(サービスロールで DB 操作。トークン照合(SHA-256 ハッシュ)・レート制限・`import_jobs`・`recipes`/`recipe_ingredients` 挿入)。挿入時に **`ensureSource`(収集元を同定/作成 → `source_id`)** と **`resolveIngredientIds`(core の索引でマスタ照合、未登録は `classifyIngredient` でカテゴリ推定して作成 → `ingredient_id`)** を通す。ここが埋まらないと買い物リストが全部「その他」に落ちる
