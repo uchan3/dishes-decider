@@ -57,7 +57,9 @@ export const EXTRACTION_SYSTEM_PROMPT = `あなたは料理レシピの構造化
 
 # 材料（事実データ・原文に忠実に）
 - 原文の表記を尊重して抽出する。抽出できない項目は null にし、推測で埋めない。
-- raw_text は原文の該当行、display_name は食材名、quantity/unit は数値化できる場合のみ。
+- raw_text は原文の該当行、display_name は**食材名だけ**（分量・単位・切り方を含めない）。
+  例: 「にんにく 1かけ」→ display_name は「にんにく」、quantity は 1、unit は「かけ」。
+- quantity/unit は数値化できる場合のみ。「適量」「少々」は quantity/unit を null にする。
 
 # 手順の要約 ── 意図的に無味乾燥にする（重要）
 - 体言止めまたは命令形の短文に正規化する。1 ステップ 60 文字以内。

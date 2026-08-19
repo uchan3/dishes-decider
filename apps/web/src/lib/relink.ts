@@ -8,7 +8,7 @@
  * 照合・カテゴリ推定は取り込みパイプラインと同じ core のロジックを使う。
  */
 
-import { classifyIngredient } from "@recipe-planner/core";
+import { classifyIngredient, stripAmountFromIngredientName } from "@recipe-planner/core";
 import { isSupabaseConfigured } from "./supabase.ts";
 import { db, type IngredientRow, type RecipeIngredientRow } from "../db/schema.ts";
 import { ingredientIndex } from "./ingredients.ts";
@@ -54,8 +54,9 @@ export async function relinkIngredients(userId: string | null): Promise<RelinkRe
   const updatedLines: RecipeIngredientRow[] = [];
 
   for (const line of pending) {
-    const name = line.display_name.trim();
-    let master = index.match(name);
+    // マスタ名は分量を落とした形で作る（「にんにく 1かけ」→「にんにく」）。
+    const name = stripAmountFromIngredientName(line.display_name);
+    let master = index.match(line.display_name);
     if (!master) {
       const { category, isPantryStaple } = classifyIngredient(name);
       master = {

@@ -4,7 +4,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("./supabase.ts", () => ({ isSupabaseConfigured: true, supabase: {} }));
 
 import { db, type IngredientRow } from "../db/schema.ts";
-import { mergeIngredients, mergedAliases, suggestMerges } from "./ingredientMerge.ts";
+import {
+  findDirtyMasters,
+  mergeIngredients,
+  mergedAliases,
+  suggestMerges,
+  tidyIngredientNames,
+} from "./ingredientMerge.ts";
 
 const master = (partial: Partial<IngredientRow> = {}): IngredientRow => ({
   id: "ing-1",
@@ -89,21 +95,22 @@ describe("suggestMerges", () => {
     expect(suggestMerges([soySauce, ramen], usage)).toEqual([]);
   });
 
-  it("keeps the more used master as the target", () => {
-    const short = master({ id: "a", canonical_name: "玉ねぎ" });
-    const long = master({ id: "b", canonical_name: "玉ねぎ（新玉）" });
+  it("keeps the more general name for a containment, even if the longer one is used more", () => {
+    // 「にんにく 1かけ」の方が使用数が多くても、残すのは「にんにく」。
+    const short = master({ id: "a", canonical_name: "にんにく" });
+    const long = master({ id: "b", canonical_name: "にんにく 1かけ" });
 
     const result = suggestMerges([short, long], new Map([["b", 5]]));
-    expect(result[0]?.target.id).toBe("b");
-    expect(result[0]?.source.id).toBe("a");
+    expect(result[0]?.target.id).toBe("a");
+    expect(result[0]?.source.id).toBe("b");
   });
 
-  it("falls back to the shorter name when usage is equal", () => {
-    const short = master({ id: "a", canonical_name: "玉ねぎ" });
-    const long = master({ id: "b", canonical_name: "玉ねぎ（新玉）" });
+  it("keeps the more used master when two names are the same", () => {
+    const a = master({ id: "a", canonical_name: "玉ねぎ" });
+    const b = master({ id: "b", canonical_name: "玉ネギ" });
 
-    const result = suggestMerges([short, long], usage);
-    expect(result[0]?.target.id).toBe("a");
+    const result = suggestMerges([a, b], new Map([["b", 5]]));
+    expect(result[0]?.target.id).toBe("b");
   });
 
   it("does not suggest unrelated ingredients", () => {
@@ -202,5 +209,56 @@ describe("mergeIngredients", () => {
     await expect(mergeIngredients(TARGET, "ffffffff-0000-4000-8000-000000000006")).rejects.toThrow(
       /見つかりません/,
     );
+  });
+});
+
+describe("findDirtyMasters / tidyIngredientNames", () => {
+  const CLEAN = "aaaaaaaa-0000-4000-8000-00000000000a";
+  const DIRTY = "bbbbbbbb-0000-4000-8000-00000000000b";
+  const LONELY = "cccccccc-0000-4000-8000-00000000000c";
+
+  beforeEach(async () => {
+    await Promise.all([
+      db.ingredients.clear(),
+      db.recipeIngredients.clear(),
+      db.shoppingItems.clear(),
+      db.outbox.clear(),
+    ]);
+  });
+
+  it("lists only masters whose name carries an amount", () => {
+    const rows = [
+      master({ id: CLEAN, canonical_name: "にんにく" }),
+      master({ id: DIRTY, canonical_name: "にんにく 1かけ" }),
+      master({ id: LONELY, canonical_name: "醤油 大さじ2" }),
+    ];
+    expect(findDirtyMasters(rows).map((d) => [d.master.id, d.cleanName])).toEqual([
+      [DIRTY, "にんにく"],
+      [LONELY, "醤油"],
+    ]);
+  });
+
+  it("merges into the clean master when one exists", async () => {
+    await db.ingredients.bulkAdd([
+      master({ id: CLEAN, canonical_name: "にんにく" }),
+      master({ id: DIRTY, canonical_name: "にんにく 1かけ" }),
+    ]);
+
+    expect(await tidyIngredientNames()).toEqual({ scanned: 1, renamed: 0, merged: 1 });
+    expect(await db.ingredients.get(DIRTY)).toBeUndefined();
+    expect((await db.ingredients.get(CLEAN))?.aliases).toEqual(["にんにく 1かけ"]);
+  });
+
+  it("just renames when there is no clean master", async () => {
+    await db.ingredients.add(master({ id: LONELY, canonical_name: "醤油 大さじ2" }));
+
+    expect(await tidyIngredientNames()).toEqual({ scanned: 1, renamed: 1, merged: 0 });
+    expect((await db.ingredients.get(LONELY))?.canonical_name).toBe("醤油");
+  });
+
+  it("does nothing when every name is already clean", async () => {
+    await db.ingredients.add(master({ id: CLEAN, canonical_name: "にんにく" }));
+    expect(await tidyIngredientNames()).toEqual({ scanned: 0, renamed: 0, merged: 0 });
+    expect(await db.outbox.count()).toBe(0);
   });
 });

@@ -8,9 +8,21 @@
  *
  * 呼び出し側の行型は snake_case (Dexie / Supabase) と camelCase (ドメイン層) で異なるため、
  * 照合対象の名前を取り出す関数 `keysOf` を受け取る形にして型を持ち込まない。
+ *
+ * 抽出が「にんにく 1かけ」のように分量込みの名前を返すことがあるため、正規化キーに加えて
+ * **末尾の分量を落としたキー**でも引けるようにしてある（{@link stripAmountFromIngredientName}）。
  */
 
 import { normalizeIngredientName } from "./name.ts";
+import { stripAmountFromIngredientName } from "./amount.ts";
+
+/** 正規化キーと、末尾の分量を落とした正規化キー。 */
+function keyPair(raw: string): { exact: string; stripped: string } {
+  return {
+    exact: normalizeIngredientName(raw),
+    stripped: normalizeIngredientName(stripAmountFromIngredientName(raw)),
+  };
+}
 
 /** マスタ 1 件から照合に使う名前（正規名 + 別名）を取り出す関数。 */
 export type IngredientMasterKeys<T> = (master: T) => readonly string[];
@@ -44,13 +56,19 @@ export function createIngredientIndex<T>(
   masters: readonly T[],
   keysOf: IngredientMasterKeys<T>,
 ): IngredientIndex<T> {
-  const byKey = new Map<string, T>();
+  /** 名前そのままのキー。 */
+  const byExact = new Map<string, T>();
+  /** 末尾の分量を落としたキー。分量込みで登録されたマスタを拾うための保険。 */
+  const byStripped = new Map<string, T>();
 
   const add = (master: T): void => {
     for (const raw of keysOf(master)) {
-      const key = normalizeIngredientName(raw);
+      const { exact, stripped } = keyPair(raw);
       // 先勝ち: 既存マスタ同士が衝突した場合は先に登録された方を正とする。
-      if (key !== "" && !byKey.has(key)) byKey.set(key, master);
+      if (exact !== "" && !byExact.has(exact)) byExact.set(exact, master);
+      if (stripped !== "" && stripped !== exact && !byStripped.has(stripped)) {
+        byStripped.set(stripped, master);
+      }
     }
   };
 
@@ -58,8 +76,15 @@ export function createIngredientIndex<T>(
 
   return {
     match(name: string): T | undefined {
-      const key = normalizeIngredientName(name);
-      return key === "" ? undefined : byKey.get(key);
+      const { exact, stripped } = keyPair(name);
+      // 完全一致を最優先し、分量を落とした照合はその後に試す。
+      const candidates = [
+        exact === "" ? undefined : byExact.get(exact),
+        stripped === "" ? undefined : byExact.get(stripped),
+        exact === "" ? undefined : byStripped.get(exact),
+        stripped === "" ? undefined : byStripped.get(stripped),
+      ];
+      return candidates.find((hit) => hit !== undefined);
     },
     add,
   };

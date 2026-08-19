@@ -1,7 +1,13 @@
 import { useMemo, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, type IngredientRow } from "../db/schema.ts";
-import { mergeIngredients, suggestMerges, type MergeReason } from "../lib/ingredientMerge.ts";
+import {
+  findDirtyMasters,
+  mergeIngredients,
+  suggestMerges,
+  tidyIngredientNames,
+  type MergeReason,
+} from "../lib/ingredientMerge.ts";
 
 const REASON_LABEL: Record<MergeReason, string> = {
   same_name: "同じ名前",
@@ -43,6 +49,23 @@ export function MergeIngredientsCard() {
     () => (masters && usage ? suggestMerges(masters, usage).slice(0, 5) : []),
     [masters, usage],
   );
+
+  /** 名前に分量が混ざったマスタ（抽出が分けきれなかったもの）。 */
+  const dirty = useMemo(() => (masters ? findDirtyMasters(masters) : []), [masters]);
+
+  async function tidy() {
+    setBusy(true);
+    try {
+      const r = await tidyIngredientNames();
+      setMessage(
+        `${r.scanned} 件の名前を整えました（統合 ${r.merged} 件 / 名前のみ修正 ${r.renamed} 件）。`,
+      );
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "整理に失敗しました");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function merge(target: IngredientRow, source: IngredientRow) {
     setBusy(true);
@@ -102,6 +125,18 @@ export function MergeIngredientsCard() {
         残る側の別名として引き継がれ、次回以降の取り込みでも同じものとして扱われます。
         <strong>統合は取り消せません。</strong>
       </p>
+
+      {dirty.length > 0 && (
+        <div className="notice notice--warn">
+          <p>
+            名前に分量が混ざった食材が {dirty.length} 件あります（例:「{dirty[0]?.master.canonical_name}」→「
+            {dirty[0]?.cleanName}」）。取り込みが材料名と分量を分けきれなかったものです。
+          </p>
+          <button className="btn" disabled={busy} onClick={() => void tidy()}>
+            名前から分量を取り除く
+          </button>
+        </div>
+      )}
 
       {suggestions.length > 0 && (
         <>
