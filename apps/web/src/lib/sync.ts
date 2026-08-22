@@ -1,15 +1,16 @@
 /**
  * ライブラリ同期（Supabase → Dexie の一方向プル）。
  *
- * この初回スライスでは recipes / recipe_ingredients / sources / ingredients を
- * Supabase から取得し Dexie に反映する（UI は常に Dexie から読む＝オフライン読取）。
- * 献立・買い物リストはローカル Dexie のまま（双方向同期は後続）。
+ * recipes / recipe_ingredients / sources / ingredients / pantry_items を Supabase から
+ * 取得し Dexie に反映する（UI は常に Dexie から読む＝オフライン読取）。
+ * 献立・買い物リストは `planSync.ts` が別途扱う。
  */
 
 import { supabase, isSupabaseConfigured } from "./supabase.ts";
 import {
   db,
   type IngredientRow,
+  type PantryItemRow,
   type RecipeIngredientRow,
   type RecipeRow,
   type SourceRow,
@@ -50,14 +51,16 @@ function toRecipeRow(r: Record<string, unknown>): RecipeRow {
 export async function pullLibrary(): Promise<number> {
   if (!isSupabaseConfigured) return 0;
 
-  const [sources, ingredients, recipes, lines] = await Promise.all([
+  const [sources, ingredients, recipes, lines, pantry] = await Promise.all([
     supabase.from("sources").select("*"),
     supabase.from("ingredients").select("*"),
     supabase.from("recipes").select("*"),
     supabase.from("recipe_ingredients").select("*"),
+    supabase.from("pantry_items").select("id, added_at"),
   ]);
 
-  const firstError = sources.error || ingredients.error || recipes.error || lines.error;
+  const firstError =
+    sources.error || ingredients.error || recipes.error || lines.error || pantry.error;
   if (firstError) throw new Error(`同期に失敗しました: ${firstError.message}`);
 
   await db.transaction(
@@ -66,6 +69,7 @@ export async function pullLibrary(): Promise<number> {
     db.ingredients,
     db.recipes,
     db.recipeIngredients,
+    db.pantryItems,
     async () => {
       if (sources.data) await db.sources.bulkPut(sources.data as SourceRow[]);
       if (ingredients.data) await db.ingredients.bulkPut(ingredients.data as IngredientRow[]);
@@ -74,6 +78,11 @@ export async function pullLibrary(): Promise<number> {
       }
       if (lines.data) {
         await db.recipeIngredients.bulkPut(lines.data as RecipeIngredientRow[]);
+      }
+      if (pantry.data) {
+        // 相手の端末で出し入れした結果を反映する（消えたものは手元からも消す）。
+        await db.pantryItems.clear();
+        await db.pantryItems.bulkPut(pantry.data as PantryItemRow[]);
       }
     },
   );

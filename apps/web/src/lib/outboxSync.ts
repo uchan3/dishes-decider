@@ -24,6 +24,7 @@ const OWNED_TABLES: ReadonlySet<SyncTable> = new Set<SyncTable>([
   "recipes",
   "ingredients",
   "sources",
+  "pantryItems",
 ]);
 
 /**

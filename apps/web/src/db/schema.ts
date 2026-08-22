@@ -131,6 +131,16 @@ export interface ShoppingItemRow {
   updated_at?: string;
 }
 
+/**
+ * 家にある食材（docs/pantry.md）。数量は持たず「ある / ない」だけ。
+ * `id` は {@link IngredientRow.id} と同じ値を使う（同じ食材は 1 行。二人が同時に
+ * 追加しても id が一致するので同期が衝突しない）。
+ */
+export interface PantryItemRow {
+  id: string;
+  added_at: string;
+}
+
 /** オフライン同期の送信キュー（outbox パターン）。 */
 export interface OutboxRow {
   seq?: number;
@@ -154,6 +164,7 @@ export class AppDatabase extends Dexie {
   recipeIngredients!: EntityTable<RecipeIngredientRow, "id">;
   mealPlans!: EntityTable<MealPlanRow, "id">;
   shoppingItems!: EntityTable<ShoppingItemRow, "id">;
+  pantryItems!: EntityTable<PantryItemRow, "id">;
   outbox!: EntityTable<OutboxRow, "seq">;
   settings!: EntityTable<SettingRow, "key">;
 
@@ -171,6 +182,10 @@ export class AppDatabase extends Dexie {
     // v2: アプリ設定用のキー・バリューストアを追加。
     this.version(2).stores({
       settings: "key",
+    });
+    // v3: 冷蔵庫（使い切りリスト）。id は食材マスタの id と同じ。
+    this.version(3).stores({
+      pantryItems: "id, added_at",
     });
   }
 }
