@@ -23,6 +23,7 @@ export const SYNC_TABLES = {
   recipeIngredients: "recipe_ingredients",
   ingredients: "ingredients",
   sources: "sources",
+  pantryItems: "pantry_items",
   /** 週ドキュメント（献立＋買い物リスト）。Dexie の 1 行ではなく組み立てて送る。 */
   planDocs: "meal_plans",
 } as const;

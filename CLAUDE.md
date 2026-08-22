@@ -10,6 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `docs/architecture.md` (v0.1) — システム構成・取り込みフロー・モノレポ構成・オフライン戦略
 - `docs/techstack_cost_analysis.md` (v0.1) — 技術選定の根拠（すべて決定済み）
 - `docs/ios-shortcut.md` — 取り込み導線（共有シート → Edge Function）のセットアップ手順とトラブルシュート
+- `docs/pantry.md` — 冷蔵庫（使い切りリスト）の仕様。**厳密な在庫管理はしない**（数量を持たない・自動消し込みをしない）方針とその理由
 
 これらの間で矛盾があれば `architecture.md` / `techstack_cost_analysis.md` の決定が優先。特に **Spec §9「技術スタック（案）」の Expo / React Native は古い案であり、確定スタックは PWA（Vite + React Router + Dexie.js）**。混同しないこと。
 
@@ -109,6 +110,7 @@ pnpm --filter @recipe-planner/web typecheck
 - `src/db/` — Dexie。**行は snake_case で保持**（Supabase と 1:1 同期のため）、`mappers.ts` で core の camelCase ドメイン型へ変換。IndexedDB は boolean をキーにできないため `is_checked` 等はインデックスせずメモリでフィルタ
 - `src/lib/planning.ts` — core (`generateMealPlan` / `aggregateShoppingList`) と Dexie を繋ぐ層。`generateWeek()` が献立を生成し Dexie に保存、`buildShoppingItems()` が買い物リストを集約。**週の「作り直す」は常に `generateWeek`**（現在の曜日テンプレで構造から再生成し、既存プランのロック済みスロットを slotId 一致で引き継ぐ）。スロット/食事の再抽選(US-05): `reshuffleSlot`(必ず別レシピ・代替無ければ現状維持) / `reshuffleMeal`（ロック維持）/ `toggleSlotLock`(US-06)。共通ロジックは `reshuffleSlots`（対象外・ロック済みのレシピを除外して再抽選）。生成・再抽選とも `loadEligibleRecipes()` 経由でレシピを読み、**無効ソース(`is_enabled=false`)のレシピを除外**(US-03)
 - `src/lib/cooking.ts` — 調理の記録。献立スロットの `cooked_at`（Dexie のみ・非インデックス列）で「作った」を持ち、レシピの `cook_count`/`last_cooked_at` を `updateRecipe` 経由で更新（Supabase にも反映）。**これが無いとクールダウンと novelty が初期値のまま効かない**(US-12)。取り消しは `deriveLastCookedAt`（全プランの記録から最新日を導出する純粋関数）で戻すため、押し間違いを繰り返しても値がずれない。調理済みスロットは再抽選・作り直しの対象外（記録が別レシピを指さないように）
+- `src/lib/pantry.ts` / `components/PantryPanel.tsx` — 冷蔵庫（docs/pantry.md）。**行の `id` は食材マスタの `id` と同じ**（同じ食材は 1 行。二人が同時に入れても id が一致するので同期が衝突しない）。買い物リストのチェックに**対称に**追従し、在庫にある材料は買い物リストで「家にあるかも」に畳む（ただし**チェック済みは畳まない** — 買い物中に押した瞬間その品が消えると面食らうため）
 - `src/lib/shopping.ts` — 買い物リストの永続化(US-09)。`syncShoppingList()` が集約結果を `shoppingItems` に保存し、`reconcileShoppingItems()`（純粋関数・テスト有り）が**既存項目の id とチェック状態を引き継ぐ**（同一性キーは `ingredient_id ?? name:正規化表示名`）。献立から消えた項目は削除、`is_manual` の項目は常に残す。**常備品も含めて保存し表示側でフィルタする**（トグルで行を作り直すとチェックが消えるため）。`setItemChecked` / `clearChecked` / `pantryIngredientIds`。手動追加(US-13)は `addManualItem`（売場は `classifyIngredient` で推定・`is_manual` を立てるので作り直しでも残る）/ `removeShoppingItem`。**献立が無い週でも追加できる**（先に買うものだけ登録しておける）
 - 曜日ごとの献立構成(US-07): `lib/mealTemplates.ts`（プリセット6種＋月起点の週割り当て）＋ `lib/settings.ts`（Dexie の `settings` KVストア。schema **v2** で追加）。設定画面で曜日別にテンプレ選択。`eat_out`(空スロット) の日は `is_skipped` の Meal になり生成対象外
 - 生成設定(F-02-1): `lib/settings.ts` の `PlanningSettings`（世帯人数・クールダウン日数・平日/休日の調理時間上限）。既定は仕様表どおり **平日 30 分・休日制限なし・クールダウン 14 日**。保存・読み込みは必ず `normalizePlanningSettings`（純粋関数・テスト有り）を通し、壊れた値が生成ロジックに流れないようにする。`generateWeek`/再抽選が core の `settings` に写して渡し、買い物リストの人数スケーリングにも使う
