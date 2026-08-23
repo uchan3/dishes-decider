@@ -91,6 +91,12 @@ export interface GenerateInput {
   /** 基準日 (YYYY-MM-DD)。クールダウン・recency の起点。 */
   referenceDate: string;
   settings?: Partial<GenerationSettings>;
+  /**
+   * レシピ ID → 在庫適合度 `[0, 1]`。冷蔵庫にある材料で作れるレシピを少しだけ
+   * 選ばれやすくする（docs/pantry.md §5）。**ハードフィルタにはしない**ので、
+   * 在庫が空でも生成の挙動は変わらない。
+   */
+  pantryScores?: ReadonlyMap<string, number>;
   /** 候補から常に除外したいレシピ ID（他献立で採用済み等）。 */
   excludeRecipeIds?: readonly string[];
   /** 乱数源。省略時は referenceDate 由来のシードで決定論的に動く。 */
@@ -221,6 +227,7 @@ function pickRecipe(
   referenceDate: string,
   settings: GenerationSettings,
   rng: Rng,
+  pantryScores?: ReadonlyMap<string, number>,
 ): Recipe | null {
   if (candidates.length === 0) return null;
   const scores = candidates.map((r) =>
@@ -229,6 +236,7 @@ function pickRecipe(
       horizonDays: settings.cooldownDays,
       selected,
       weights: settings.weights,
+      ...(pantryScores === undefined ? {} : { pantryScores }),
     }),
   );
   const probs = softmax(scores, settings.temperature);
@@ -321,7 +329,14 @@ export function generateMealPlan(input: GenerateInput): GenerateResult {
       input.referenceDate,
       settings,
     );
-    const pick = pickRecipe(candidates, selected, input.referenceDate, settings, rng);
+    const pick = pickRecipe(
+      candidates,
+      selected,
+      input.referenceDate,
+      settings,
+      rng,
+      input.pantryScores,
+    );
     for (const r of relaxed) relaxations.add(r);
 
     assignments.push({
@@ -413,7 +428,14 @@ function applyVarietyRetries(
       (r) => r.id !== target.recipeId && r.mainIngredientCategory !== overused,
     );
     const pool = avoiding.length > 0 ? avoiding : candidates;
-    const pick = pickRecipe(pool, selected, input.referenceDate, settings, rng);
+    const pick = pickRecipe(
+      pool,
+      selected,
+      input.referenceDate,
+      settings,
+      rng,
+      input.pantryScores,
+    );
 
     // 選び直せなければ元に戻して打ち切り（無限ループ防止）。
     const chosen = pick ?? current ?? null;

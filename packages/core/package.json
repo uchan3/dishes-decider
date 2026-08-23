@@ -12,7 +12,8 @@
     "./normalize": "./src/normalize/index.ts",
     "./similarity": "./src/similarity/index.ts",
     "./extraction": "./src/extraction/index.ts",
-    "./tokens": "./src/tokens/index.ts"
+    "./tokens": "./src/tokens/index.ts",
+    "./pantry": "./src/pantry/index.ts"
   },
   "scripts": {
     "test": "vitest run",

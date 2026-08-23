@@ -8,6 +8,7 @@
 import {
   aggregateShoppingList,
   generateMealPlan,
+  matchPantry,
   type Recipe,
   type RecipeForShopping,
   type ShoppingItem,
@@ -38,6 +39,42 @@ function generationSettings(settings: PlanningSettings) {
     weekdayMaxCookMin: settings.weekdayMaxCookMin,
     weekendMaxCookMin: settings.weekendMaxCookMin,
   };
+}
+
+/**
+ * レシピ ID → 在庫適合度を作る（docs/pantry.md §5）。
+ *
+ * 冷蔵庫が空なら空の Map を返す。生成側はこれを加点にしか使わないので、
+ * 在庫が無い・古いといった状態でも献立の作られ方は壊れない。
+ */
+async function loadPantryScores(): Promise<Map<string, number>> {
+  const pantry = await db.pantryItems.toArray();
+  if (pantry.length === 0) return new Map();
+
+  const pantryIngredientIds = new Set(pantry.map((row) => row.id));
+  const [lines, masters] = await Promise.all([
+    db.recipeIngredients.toArray(),
+    db.ingredients.toArray(),
+  ]);
+  const staples = new Set(masters.filter((m) => m.is_pantry_staple).map((m) => m.id));
+
+  const byRecipe = new Map<string, ReturnType<typeof toRecipeIngredient>[]>();
+  for (const row of lines) {
+    const list = byRecipe.get(row.recipe_id) ?? [];
+    list.push(toRecipeIngredient(row));
+    byRecipe.set(row.recipe_id, list);
+  }
+
+  const scores = new Map<string, number>();
+  for (const [recipeId, ingredients] of byRecipe) {
+    const { score } = matchPantry({
+      ingredients,
+      pantryIngredientIds,
+      isPantryStaple: (id) => staples.has(id),
+    });
+    if (score > 0) scores.set(recipeId, score);
+  }
+  return scores;
 }
 
 /**
@@ -100,10 +137,11 @@ export interface GeneratedWeek {
  * @returns 生成された献立と緩和情報
  */
 export async function generateWeek(startDate: string): Promise<GeneratedWeek> {
-  const [recipes, weekday, settings, existing] = await Promise.all([
+  const [recipes, weekday, settings, pantryScores, existing] = await Promise.all([
     loadEligibleRecipes(),
     loadWeekdayTemplates(),
     loadPlanningSettings(),
+    loadPantryScores(),
     db.mealPlans.get(`plan-${startDate}`),
   ]);
   const days = buildWeekPlan(startDate, weekday);
@@ -129,6 +167,7 @@ export async function generateWeek(startDate: string): Promise<GeneratedWeek> {
     recipes,
     referenceDate: today(),
     settings: generationSettings(settings),
+    pantryScores,
     rng: Math.random, // UI では再生成のたびに変化させる
   });
 
@@ -227,7 +266,11 @@ async function reshuffleSlots(
     if (forceChange && slot.recipe_id) excluded.add(slot.recipe_id);
   }
 
-  const [recipes, settings] = await Promise.all([loadEligibleRecipes(), loadPlanningSettings()]);
+  const [recipes, settings, pantryScores] = await Promise.all([
+    loadEligibleRecipes(),
+    loadPlanningSettings(),
+    loadPantryScores(),
+  ]);
   const result = generateMealPlan({
     slots: regen.map(({ slot, date }) => ({
       slotId: slot.id,
@@ -238,6 +281,7 @@ async function reshuffleSlots(
     recipes,
     referenceDate: today(),
     settings: generationSettings(settings),
+    pantryScores,
     excludeRecipeIds: [...excluded],
     rng: Math.random,
   });

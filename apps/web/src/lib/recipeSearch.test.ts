@@ -166,3 +166,34 @@ describe("filterRecipes（ソース・調理時間）", () => {
     expect(ids(rows)).toEqual(["y1"]);
   });
 });
+
+describe("filterRecipes（冷蔵庫）", () => {
+  const canMake = { ...recipe({ id: "p0", title: "今作れる一皿" }) };
+  const oneShort = { ...recipe({ id: "p1", title: "あと1品" }) };
+  const manyShort = { ...recipe({ id: "p3", title: "あと3品" }) };
+  const unlinked = { ...recipe({ id: "px", title: "材料が未紐付け" }) };
+
+  const pantryEntries: RecipeSearchEntry[] = [
+    { recipe: manyShort, ingredientNames: [], pantryScore: 0.25, missing: 3 },
+    { recipe: canMake, ingredientNames: [], pantryScore: 1, missing: 0 },
+    { recipe: oneShort, ingredientNames: [], pantryScore: 0.5, missing: 1 },
+    // 突き合わせ対象が無いレシピ（missing なし）
+    { recipe: unlinked, ingredientNames: [], pantryScore: 0 },
+  ];
+
+  it("sorts by how much of the recipe is already at home", () => {
+    const rows = filterRecipes(pantryEntries, { ...DEFAULT_RECIPE_FILTER, sort: "pantry" });
+    expect(ids(rows).slice(0, 3)).toEqual(["p0", "p1", "p3"]);
+  });
+
+  it("filters by how many ingredients are missing", () => {
+    const rows = filterRecipes(pantryEntries, { ...DEFAULT_RECIPE_FILTER, maxMissing: 1 });
+    // あと 0〜1 品のものと、突き合わせ対象が無いレシピは残す。
+    expect(ids(rows).sort()).toEqual(["p0", "p1", "px"]);
+  });
+
+  it("ignores pantry data entirely under the default filter", () => {
+    const rows = filterRecipes(pantryEntries, DEFAULT_RECIPE_FILTER);
+    expect(rows).toHaveLength(4);
+  });
+});

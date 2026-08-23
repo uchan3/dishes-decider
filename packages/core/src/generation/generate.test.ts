@@ -215,3 +215,55 @@ describe("同一食事内の重複（mealId）", () => {
     expect(result.assignments.map((a) => a.recipeId)).toEqual(["s1", "s1"]);
   });
 });
+
+describe("在庫の加点（pantryScores）", () => {
+  it("prefers a recipe you can make with what is at home", () => {
+    const recipes = [makeRecipe({ id: "stocked" }), makeRecipe({ id: "not-stocked" })];
+    const pantryScores = new Map([["stocked", 1]]);
+
+    // 加点が効くかは確率的なので、複数回引いて偏りを見る。
+    let stocked = 0;
+    for (let seed = 0; seed < 40; seed++) {
+      const result = generateMealPlan({
+        slots: mainSlots(1),
+        recipes,
+        referenceDate: REF,
+        pantryScores,
+        rng: mulberry32(seed),
+      });
+      if (result.assignments[0]?.recipeId === "stocked") stocked++;
+    }
+    expect(stocked).toBeGreaterThan(20);
+  });
+
+  it("still picks a recipe when nothing is at home", () => {
+    const recipes = [makeRecipe({ id: "a" })];
+    const result = generateMealPlan({
+      slots: mainSlots(1),
+      recipes,
+      referenceDate: REF,
+      pantryScores: new Map(),
+      rng: mulberry32(1),
+    });
+    expect(result.assignments[0]?.recipeId).toBe("a");
+    expect(result.unfilledSlotIds).toEqual([]);
+  });
+
+  it("behaves exactly as before when pantryScores is omitted", () => {
+    const recipes = [makeRecipe({ id: "a" }), makeRecipe({ id: "b" }), makeRecipe({ id: "c" })];
+    const withMap = generateMealPlan({
+      slots: mainSlots(3),
+      recipes,
+      referenceDate: REF,
+      pantryScores: new Map(),
+      rng: mulberry32(7),
+    });
+    const without = generateMealPlan({
+      slots: mainSlots(3),
+      recipes,
+      referenceDate: REF,
+      rng: mulberry32(7),
+    });
+    expect(withMap.assignments).toEqual(without.assignments);
+  });
+});
