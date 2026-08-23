@@ -1,7 +1,7 @@
 /**
  * 献立生成のスコアリング（仕様書 F-02-2）。
  *
- *   score = w1 * recency   + w2 * favorite + w3 * novelty
+ *   score = w1 * recency   + w2 * favorite + w3 * novelty + w6 * pantry
  *         - w4 * variety   - w5 * reject
  *
  * 各サブスコアは概ね `[0, 1]` に正規化し、重みで強弱を付ける。
@@ -21,6 +21,8 @@ export interface ScoreWeights {
   variety: number;
   /** reject: 再抽選で弾かれた回数に応じて減点。 */
   reject: number;
+  /** pantry: 家にある材料で作れるほど加点（docs/pantry.md §5）。 */
+  pantry: number;
 }
 
 /** 既定の重み。novelty と recency をやや強め、favorite で好みを反映する。 */
@@ -30,6 +32,8 @@ export const DEFAULT_WEIGHTS: ScoreWeights = {
   novelty: 1.2,
   variety: 1.5,
   reject: 1.0,
+  // 控えめ。在庫が偏っていても献立の多様性を壊さない強さにする。
+  pantry: 0.8,
 };
 
 /** 1 日 = ミリ秒。 */
@@ -103,6 +107,11 @@ export interface ScoreContext {
   /** この週で既に採用済みのレシピ群（variety ペナルティ算出用）。 */
   selected: readonly Recipe[];
   weights: ScoreWeights;
+  /**
+   * レシピ ID → 在庫適合度 `[0, 1]`（core の `matchPantry` の結果）。
+   * 未指定・未収録のレシピは 0（無得点。ペナルティにはしない）。
+   */
+  pantryScores?: ReadonlyMap<string, number>;
 }
 
 /**
@@ -123,7 +132,8 @@ export function scoreRecipe(recipe: Recipe, ctx: ScoreContext): number {
   return (
     w.recency * recencyScore(recipe, ctx.referenceDate, ctx.horizonDays) +
     w.favorite * (recipe.isFavorite ? 1 : 0) +
-    w.novelty * noveltyScore(recipe) -
+    w.novelty * noveltyScore(recipe) +
+    w.pantry * (ctx.pantryScores?.get(recipe.id) ?? 0) -
     w.variety * varietyPenalty(recipe, ctx.selected) -
     w.reject * rejectPenalty(recipe)
   );

@@ -128,9 +128,10 @@ pnpm --filter @recipe-planner/web typecheck
 
 ### packages/core の構成
 - `src/types/` — 共有ドメイン型（DB は snake_case、ドメイン層は camelCase。変換は永続化層の責務）
-- `src/generation/` — 献立生成。`generateMealPlan()` が入口。`rng.ts`(seeded RNG + softmax) / `scoring.ts`(F-02-2 の重み付け) / `generate.ts`(候補構築→フィルタ→サンプリング→多様性再抽選→制約緩和)。**同一食事内の重複だけは緩和対象外**（`SlotRequest.mealId` でグループ化。同じ日の主菜と副菜が同じ料理になるのは献立として成立しないため、埋まらない枠は空のままにする）。**乱数は注入可能**（テストは `mulberry32` で決定論化）
+- `src/generation/` — 献立生成。`generateMealPlan()` が入口。`rng.ts`(seeded RNG + softmax) / `scoring.ts`(F-02-2 の重み付け＋在庫加点 `pantry`) / `generate.ts`(候補構築→フィルタ→サンプリング→多様性再抽選→制約緩和)。**同一食事内の重複だけは緩和対象外**（`SlotRequest.mealId` でグループ化。同じ日の主菜と副菜が同じ料理になるのは献立として成立しないため、埋まらない枠は空のままにする）。**乱数は注入可能**（テストは `mulberry32` で決定論化）
 - `src/shopping/` — 買い物リスト集約。`aggregateShoppingList()` が入口。`units.ts`(単位分類・換算 §5.3) / `aggregate.ts`(展開→スケール→グルーピング→合算→常備品除外→売場順ソート)
 - `src/normalize/` — 食材名の正規化。`name.ts`(`normalizeIngredientName()`: NFKC→ひらがな化→空白除去→小文字化) / `match.ts`(`createIngredientIndex`/`matchIngredientMaster`: 正規化キー＋`aliases` でマスタ照合。行型を持ち込まないため名前取り出し関数 `keysOf` を受ける。**分量を落としたキーでも引ける**ので「にんにく 1かけ」と「にんにく」が繋がる。完全一致が優先) / `amount.ts`(`stripAmountFromIngredientName`: 名前末尾の分量を除去。抽出が `display_name` に分量を混ぜてくることへの防御) / `category.ts`(`classifyIngredient`: 辞書の**最長一致**で売場カテゴリ＋常備品フラグを推定。「冷凍◯◯」は先頭一致で frozen)。手動入力と抽出パイプラインが共有する
+- `src/pantry/` — 冷蔵庫とレシピの突き合わせ (`matchPantry`)。**献立生成の加点とライブラリの「今作れる」検索が同じ計算を使う**。対象は「マスタ紐付けあり・常備品でない・曖昧量でない」材料だけ。対象 0 件なら score 0（ペナルティにしない）
 - `src/tokens/` — ingest トークンの生成 (`generateIngestToken`) と SHA-256 ハッシュ (`hashIngestToken`)。**発行する PWA と照合する Edge Function が同じ実装を使うことが必須**なのでここに置く
 - `src/similarity/` — 文字 3-gram 類似度（§3.4）。`overlapRatio`/`checkSimilarity`、閾値 `SIMILARITY_THRESHOLDS`(私的0.6/公開0.4)。要約が原文表現をなぞっていないかの機械検査
 - `src/extraction/` — レシピ抽出の**共有型・純粋ロジック**（Deno の Edge Function から利用）。`types.ts`(`ExtractionProvider` 抽象/結果型) / `jsonld.ts`(schema.org/Recipe 直接マッピング=Tier0・LLM不要) / `gate.ts`(`applySimilarityGate`: 超過なら再生成最大2回→破棄) / `html.ts`(JSON-LD ブロック抽出・本文テキスト化、DOM非依存) / `youtube.ts`(watch HTML から概要欄`shortDescription`/タイトル抽出。概要欄は`<script>`内で htmlToText では落ちるため専用) / `url.ts`(`validateExternalUrl`: SSRF 判定) / `source.ts`(`deriveSource`: 原典 URL＋ヒントから収集元を同定。YouTube はチャンネル ID、Web はホスト名が `identifier`) / `prompt.ts`(**Gemini responseSchema 互換**の出力スキーマ＋プロンプト)

@@ -12,13 +12,17 @@ import type { DishRole } from "@recipe-planner/core";
 import type { RecipeRow } from "../db/schema.ts";
 
 /** 並べ替えの軸。 */
-export type RecipeSort = "recent" | "title" | "last_cooked" | "cook_count";
+export type RecipeSort = "recent" | "title" | "last_cooked" | "cook_count" | "pantry";
 
-/** 検索対象の 1 件（レシピ＋その材料名）。 */
+/** 検索対象の 1 件（レシピ＋その材料名＋冷蔵庫との突き合わせ）。 */
 export interface RecipeSearchEntry {
   recipe: RecipeRow;
   /** このレシピの材料の表示名。 */
   ingredientNames: readonly string[];
+  /** 在庫適合度 `[0, 1]`（docs/pantry.md §7）。冷蔵庫が空なら 0。 */
+  pantryScore?: number;
+  /** 足りない材料の数（「あと N 品」）。突き合わせ対象が無ければ undefined。 */
+  missing?: number;
 }
 
 /** 絞り込み条件。 */
@@ -31,6 +35,8 @@ export interface RecipeFilter {
   sourceId: string | "all";
   /** 調理時間の上限（分）。null なら絞り込まない。時間が不明なレシピは残す。 */
   maxCookMin: number | null;
+  /** 「あと N 品」の上限。null なら絞り込まない（docs/pantry.md §7）。 */
+  maxMissing: number | null;
   /** お気に入りのみ。 */
   favoritesOnly: boolean;
   sort: RecipeSort;
@@ -42,6 +48,7 @@ export const DEFAULT_RECIPE_FILTER: RecipeFilter = {
   role: "all",
   sourceId: "all",
   maxCookMin: null,
+  maxMissing: null,
   favoritesOnly: false,
   sort: "recent",
 };
@@ -54,7 +61,21 @@ function compareNullableDesc(a: string | null, b: string | null): number {
   return a < b ? 1 : -1;
 }
 
-function compare(a: RecipeRow, b: RecipeRow, sort: RecipeSort): number {
+function compare(
+  a: RecipeSearchEntry,
+  b: RecipeSearchEntry,
+  sort: RecipeSort,
+): number {
+  if (sort === "pantry") {
+    // 在庫で作れる順。同点なら「あと N 品」が少ない順（材料が少ないレシピを優先）。
+    const byScore = (b.pantryScore ?? 0) - (a.pantryScore ?? 0);
+    if (byScore !== 0) return byScore;
+    return (a.missing ?? Number.MAX_SAFE_INTEGER) - (b.missing ?? Number.MAX_SAFE_INTEGER);
+  }
+  return compareRecipes(a.recipe, b.recipe, sort);
+}
+
+function compareRecipes(a: RecipeRow, b: RecipeRow, sort: RecipeSort): number {
   switch (sort) {
     case "title":
       return a.title.localeCompare(b.title, "ja");
@@ -86,7 +107,12 @@ export function filterRecipes(
 ): RecipeRow[] {
   const key = normalizeIngredientName(filter.query);
 
-  const matched = entries.filter(({ recipe, ingredientNames }) => {
+  const matched = entries.filter((entry) => {
+    const { recipe, ingredientNames } = entry;
+    // 「あと N 品」で絞る。突き合わせ対象が無いレシピ（材料が未紐付け等）は落とさない。
+    if (filter.maxMissing !== null && entry.missing !== undefined) {
+      if (entry.missing > filter.maxMissing) return false;
+    }
     if (filter.favoritesOnly && !recipe.is_favorite) return false;
     if (filter.role !== "all" && !recipe.dish_roles.includes(filter.role)) return false;
     if (filter.sourceId !== "all" && recipe.source_id !== filter.sourceId) return false;
@@ -105,5 +131,5 @@ export function filterRecipes(
     return haystack.some((text) => normalizeIngredientName(text).includes(key));
   });
 
-  return matched.map((e) => e.recipe).sort((a, b) => compare(a, b, filter.sort));
+  return [...matched].sort((a, b) => compare(a, b, filter.sort)).map((e) => e.recipe);
 }

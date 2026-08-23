@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { Link } from "react-router-dom";
 import type { DishRole } from "@recipe-planner/core";
+import { matchPantry } from "@recipe-planner/core";
 import { db } from "../db/schema.ts";
 import {
   DEFAULT_RECIPE_FILTER,
@@ -37,6 +38,7 @@ const COOK_TIME_OPTIONS: { value: number | null; label: string }[] = [
 
 const SORT_OPTIONS: { value: RecipeSort; label: string }[] = [
   { value: "recent", label: "追加が新しい順" },
+  { value: "pantry", label: "在庫で作れる順" },
   { value: "last_cooked", label: "最近作った順" },
   { value: "cook_count", label: "よく作る順" },
   { value: "title", label: "名前順" },
@@ -48,33 +50,78 @@ export function LibraryPage() {
   const [role, setRole] = useState<DishRole | "all">("all");
   const [sourceId, setSourceId] = useState<string | "all">("all");
   const [maxCookMin, setMaxCookMin] = useState<number | null>(null);
+  const [maxMissing, setMaxMissing] = useState<number | null>(null);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [sort, setSort] = useState<RecipeSort>(DEFAULT_RECIPE_FILTER.sort);
 
   const sources = useLiveQuery(() => db.sources.toArray(), [], []);
 
   // 検索は材料名も対象にするため、レシピと材料を突き合わせた索引を作る。
+  // 併せて冷蔵庫との突き合わせ（docs/pantry.md §7）もここで済ませる。
   const entries = useLiveQuery(async () => {
-    const [recipes, lines] = await Promise.all([
+    const [recipes, lines, masters, pantry] = await Promise.all([
       db.recipes.toArray(),
       db.recipeIngredients.toArray(),
+      db.ingredients.toArray(),
+      db.pantryItems.toArray(),
     ]);
-    const namesByRecipe = new Map<string, string[]>();
+    const pantryIngredientIds = new Set(pantry.map((row) => row.id));
+    const staples = new Set(masters.filter((m) => m.is_pantry_staple).map((m) => m.id));
+
+    const linesByRecipe = new Map<string, typeof lines>();
     for (const line of lines) {
-      const list = namesByRecipe.get(line.recipe_id) ?? [];
-      list.push(line.display_name);
-      namesByRecipe.set(line.recipe_id, list);
+      const list = linesByRecipe.get(line.recipe_id) ?? [];
+      list.push(line);
+      linesByRecipe.set(line.recipe_id, list);
     }
-    return recipes.map<RecipeSearchEntry>((recipe) => ({
-      recipe,
-      ingredientNames: namesByRecipe.get(recipe.id) ?? [],
-    }));
+
+    return recipes.map<RecipeSearchEntry>((recipe) => {
+      const rows = linesByRecipe.get(recipe.id) ?? [];
+      const match = matchPantry({
+        ingredients: rows.map((row) => ({
+          id: row.id,
+          recipeId: row.recipe_id,
+          ingredientId: row.ingredient_id,
+          displayName: row.display_name,
+          rawText: row.raw_text,
+          quantity: row.quantity,
+          unit: row.unit,
+          isAmbiguous: row.is_ambiguous,
+        })),
+        pantryIngredientIds,
+        isPantryStaple: (id) => staples.has(id),
+      });
+      return {
+        recipe,
+        ingredientNames: rows.map((row) => row.display_name),
+        pantryScore: match.score,
+        ...(match.targetCount === 0 ? {} : { missing: match.missing }),
+      };
+    });
   }, []);
 
   const recipes = useMemo(
-    () => filterRecipes(entries ?? [], { query, role, sourceId, maxCookMin, favoritesOnly, sort }),
-    [entries, query, role, sourceId, maxCookMin, favoritesOnly, sort],
+    () =>
+      filterRecipes(entries ?? [], {
+        query,
+        role,
+        sourceId,
+        maxCookMin,
+        maxMissing,
+        favoritesOnly,
+        sort,
+      }),
+    [entries, query, role, sourceId, maxCookMin, maxMissing, favoritesOnly, sort],
   );
+
+  /** レシピ ID → 「あと N 品」。一覧の表示に使う。 */
+  const missingById = useMemo(
+    () => new Map((entries ?? []).map((e) => [e.recipe.id, e.missing] as const)),
+    [entries],
+  );
+
+  /** 冷蔵庫が空なら在庫まわりの UI は出さない（意味のない選択肢を並べない）。 */
+  const hasPantry = useLiveQuery(async () => (await db.pantryItems.count()) > 0, [], false);
 
   if (!entries) return <p className="muted">読み込み中…</p>;
 
@@ -139,6 +186,16 @@ export function LibraryPage() {
               </option>
             ))}
           </select>
+          {hasPantry && (
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={maxMissing !== null}
+                onChange={(e) => setMaxMissing(e.target.checked ? 2 : null)}
+              />
+              あと2品まで
+            </label>
+          )}
           <label className="toggle">
             <input
               type="checkbox"
@@ -169,6 +226,11 @@ export function LibraryPage() {
                     {r.dish_roles.map((role) => ROLE_LABEL[role] ?? role).join("・")}
                     {r.cook_time_min !== null && ` ・ ${r.cook_time_min}分`}
                     {r.cook_count > 0 && ` ・ ${r.cook_count}回`}
+                    {hasPantry &&
+                      missingById.get(r.id) !== undefined &&
+                      (missingById.get(r.id) === 0
+                        ? " ・ 今作れる"
+                        : ` ・ あと${missingById.get(r.id)}品`)}
                   </span>
                 </div>
                 {r.tags.length > 0 && (
