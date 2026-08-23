@@ -8,6 +8,7 @@ import {
   addToPantry,
   listPantry,
   pantryIngredientIdSet,
+  pantryUsedByRecipe,
   removeFromPantry,
   syncPantryWithCheck,
 } from "./pantry.ts";
@@ -107,5 +108,88 @@ describe("pantry", () => {
     const entries = await listPantry();
     expect(entries).toHaveLength(1);
     expect(entries[0]?.name).toBeNull();
+  });
+});
+
+describe("pantryUsedByRecipe", () => {
+  const RECIPE = "33333333-3333-4333-8333-333333333333";
+
+  const line = (id: string, ingredientId: string | null, name: string) => ({
+    id,
+    recipe_id: RECIPE,
+    ingredient_id: ingredientId,
+    raw_text: name,
+    display_name: name,
+    quantity: 1,
+    unit: null,
+    is_ambiguous: false,
+    position: 0,
+  });
+
+  // このブロックは外側の describe の外にあるので、前提を自前で作り直す。
+  beforeEach(async () => {
+    await Promise.all([
+      db.recipeIngredients.clear(),
+      db.pantryItems.clear(),
+      db.ingredients.clear(),
+      db.outbox.clear(),
+    ]);
+    await db.ingredients.bulkAdd([
+      master(ONION, "玉ねぎ", "vegetable"),
+      master(PORK, "豚こま切れ肉", "meat"),
+    ]);
+  });
+
+  it("returns only the ingredients that are actually in the fridge", async () => {
+    await addToPantry(ONION);
+    await db.recipeIngredients.bulkAdd([
+      line("l1", ONION, "玉ねぎ"),
+      line("l2", PORK, "豚こま切れ肉"),
+      line("l3", null, "水"),
+    ]);
+
+    const used = await pantryUsedByRecipe(RECIPE);
+    expect(used).toEqual([{ ingredientId: ONION, name: "玉ねぎ" }]);
+  });
+
+  it("lists an ingredient once even if the recipe uses it twice", async () => {
+    await addToPantry(ONION);
+    await db.recipeIngredients.bulkAdd([line("l1", ONION, "玉ねぎ"), line("l2", ONION, "玉ねぎ")]);
+
+    expect(await pantryUsedByRecipe(RECIPE)).toHaveLength(1);
+  });
+
+  it("skips pantry staples so seasonings are not asked about every time", async () => {
+    await db.ingredients.update(PORK, { is_pantry_staple: true });
+    await addToPantry(ONION);
+    await addToPantry(PORK);
+    await db.recipeIngredients.bulkAdd([line("l1", ONION, "玉ねぎ"), line("l2", PORK, "醤油")]);
+
+    expect(await pantryUsedByRecipe(RECIPE)).toEqual([{ ingredientId: ONION, name: "玉ねぎ" }]);
+  });
+
+  it("returns nothing when the fridge is empty", async () => {
+    await db.recipeIngredients.add(line("l1", ONION, "玉ねぎ"));
+    expect(await pantryUsedByRecipe(RECIPE)).toEqual([]);
+  });
+});
+
+describe("listPantry の古い判定", () => {
+  beforeEach(async () => {
+    await Promise.all([db.pantryItems.clear(), db.ingredients.clear()]);
+    await db.ingredients.bulkAdd([
+      master(ONION, "玉ねぎ", "vegetable"),
+      master(PORK, "豚こま切れ肉", "meat"),
+    ]);
+  });
+
+  it("flags an item that has been in the fridge for a while", async () => {
+    await db.pantryItems.put({ id: ONION, added_at: "2020-01-01T00:00:00.000Z" });
+    await db.pantryItems.put({ id: PORK, added_at: new Date().toISOString() });
+
+    const entries = await listPantry();
+    const byName = new Map(entries.map((e) => [e.name, e.isStale] as const));
+    expect(byName.get("玉ねぎ")).toBe(true);
+    expect(byName.get("豚こま切れ肉")).toBe(false);
   });
 });

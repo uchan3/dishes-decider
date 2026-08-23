@@ -39,6 +39,8 @@ export function PantryPanel() {
       .slice(0, 8);
   }, [masters, inPantry, query]);
 
+  const staleCount = (entries ?? []).filter((e) => e.isStale).length;
+
   if (!entries) return <p className="muted">読み込み中…</p>;
 
   return (
@@ -46,6 +48,12 @@ export function PantryPanel() {
       <p className="muted">
         買い物リストでチェックしたものが自動で入ります。使い切ったら × で出してください。
       </p>
+
+      {staleCount > 0 && (
+        <p className="notice notice--warn">
+          {staleCount} 件は入れてから日が経っています。まだあるか確認してみてください。
+        </p>
+      )}
 
       <div className="pantry-add">
         <input
@@ -81,11 +89,12 @@ export function PantryPanel() {
         </div>
       ) : (
         <ul className="pantry-list">
-          {entries.map(({ item, name, category }) => (
-            <li key={item.id} className="pantry-row">
+          {entries.map(({ item, name, category, isStale }) => (
+            <li key={item.id} className={isStale ? "pantry-row pantry-row--stale" : "pantry-row"}>
               <span className="pantry-row__name">{name ?? "（削除された食材）"}</span>
               <span className="pantry-row__meta">
                 {CATEGORY_LABEL[category as IngredientCategory] ?? ""}
+                {isStale && " ・ そろそろ？"}
               </span>
               <button
                 className="icon-btn"

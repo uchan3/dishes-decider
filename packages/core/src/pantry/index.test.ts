@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RecipeIngredient } from "../types/index.ts";
-import { matchPantry } from "./index.ts";
+import { isStalePantryItem, matchPantry } from "./index.ts";
 
 const line = (partial: Partial<RecipeIngredient> & { id: string }): RecipeIngredient => ({
   recipeId: "r1",
@@ -63,5 +63,34 @@ describe("matchPantry", () => {
       pantryIngredientIds: new Set(),
     });
     expect(result).toEqual({ score: 0, matched: 0, missing: 2, targetCount: 2 });
+  });
+});
+
+describe("isStalePantryItem", () => {
+  const NOW = new Date("2026-08-23T12:00:00Z");
+  const daysAgo = (n: number) =>
+    new Date(NOW.getTime() - n * 24 * 60 * 60 * 1000).toISOString();
+
+  it("flags fresh produce after 5 days", () => {
+    expect(isStalePantryItem(daysAgo(4), "vegetable", NOW)).toBe(false);
+    expect(isStalePantryItem(daysAgo(6), "vegetable", NOW)).toBe(true);
+    expect(isStalePantryItem(daysAgo(6), "meat", NOW)).toBe(true);
+    expect(isStalePantryItem(daysAgo(6), "seafood", NOW)).toBe(true);
+  });
+
+  it("gives dry goods and frozen items longer", () => {
+    expect(isStalePantryItem(daysAgo(10), "dry_goods", NOW)).toBe(false);
+    expect(isStalePantryItem(daysAgo(15), "dry_goods", NOW)).toBe(true);
+    expect(isStalePantryItem(daysAgo(10), "frozen", NOW)).toBe(false);
+  });
+
+  it("treats an unknown category as non-perishable", () => {
+    expect(isStalePantryItem(daysAgo(10), null, NOW)).toBe(false);
+    expect(isStalePantryItem(daysAgo(15), null, NOW)).toBe(true);
+  });
+
+  it("never flags something added just now, and tolerates a broken date", () => {
+    expect(isStalePantryItem(NOW.toISOString(), "vegetable", NOW)).toBe(false);
+    expect(isStalePantryItem("こわれた日付", "vegetable", NOW)).toBe(false);
   });
 });
