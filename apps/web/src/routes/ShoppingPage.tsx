@@ -13,6 +13,8 @@ import {
   syncShoppingList,
 } from "../lib/shopping.ts";
 import { loadPlanningSettings } from "../lib/settings.ts";
+import { pantryIngredientIdSet, removeFromPantry } from "../lib/pantry.ts";
+import { PantryPanel } from "../components/PantryPanel.tsx";
 
 const CATEGORY_META: Record<IngredientCategory, { icon: string; label: string }> = {
   vegetable: { icon: "🥬", label: "野菜" },
@@ -35,7 +37,11 @@ export function ShoppingPage() {
   const planId = `plan-${weekStart}`;
   const plan = useLiveQuery(() => db.mealPlans.get(planId), [planId]);
 
+  /** 買うもの / 冷蔵庫 の切替（docs/pantry.md §8）。 */
+  const [tab, setTab] = useState<"list" | "pantry">("list");
   const [includePantry, setIncludePantry] = useState(false);
+  /** 「家にあるかも」を開いているか。 */
+  const [showAtHome, setShowAtHome] = useState(false);
   const [syncing, setSyncing] = useState(false);
 
   // 手動追加フォーム（US-13）。
@@ -79,16 +85,33 @@ export function ShoppingPage() {
   }, [planId]);
 
   const pantryIds = useLiveQuery(() => pantryIngredientIds(), [], new Set<string>());
+  /** 冷蔵庫に入っている食材（買い物リストでは「家にあるかも」に畳む）。 */
+  const atHomeIds = useLiveQuery(() => pantryIngredientIdSet(), [], new Set<string>());
 
   const isPantry = (row: ShoppingItemRow): boolean =>
     row.ingredient_id !== null && pantryIds.has(row.ingredient_id);
 
-  const visible = useMemo(
+  const isAtHome = (row: ShoppingItemRow): boolean =>
+    row.ingredient_id !== null && atHomeIds.has(row.ingredient_id);
+
+  /** 常備品を除いた表示対象。 */
+  const shown = useMemo(
     () => (items ?? []).filter((row) => includePantry || !isPantry(row)),
     [items, includePantry, pantryIds],
   );
 
-  const hiddenPantryCount = (items ?? []).length - visible.length;
+  /**
+   * 家にある材料は畳む。完全には隠さない（買い忘れに気づけなくなるため）。
+   *
+   * ただし**チェック済みの項目は畳まない**。買い物中にチェックした瞬間、その品が
+   * リストから消えて畳まれた中に移動するのは面食らうため（チェック＝冷蔵庫に入る）。
+   * 次の週のリストでは未チェックに戻るので、そこで初めて「家にあるかも」に落ちる。
+   */
+  const foldable = (row: ShoppingItemRow): boolean => isAtHome(row) && !row.is_checked;
+  const visible = useMemo(() => shown.filter((row) => !foldable(row)), [shown, atHomeIds]);
+  const atHome = useMemo(() => shown.filter(foldable), [shown, atHomeIds]);
+
+  const hiddenPantryCount = (items ?? []).length - shown.length;
 
   /** 献立が無いときに表示する手動追加分。 */
   const manualItems = (items ?? []).filter((row) => row.is_manual);
@@ -191,16 +214,37 @@ export function ShoppingPage() {
   return (
     <section>
       <header className="page-head">
-        <h1>買い物リスト</h1>
-        <label className="toggle">
-          <input
-            type="checkbox"
-            checked={includePantry}
-            onChange={(e) => setIncludePantry(e.target.checked)}
-          />
-          常備品も表示
-        </label>
+        <h1>買い物</h1>
+        {tab === "list" && (
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={includePantry}
+              onChange={(e) => setIncludePantry(e.target.checked)}
+            />
+            常備品も表示
+          </label>
+        )}
       </header>
+
+      <div className="segmented">
+        <button
+          className={tab === "list" ? "segmented__btn segmented__btn--on" : "segmented__btn"}
+          onClick={() => setTab("list")}
+        >
+          買うもの
+        </button>
+        <button
+          className={tab === "pantry" ? "segmented__btn segmented__btn--on" : "segmented__btn"}
+          onClick={() => setTab("pantry")}
+        >
+          冷蔵庫
+        </button>
+      </div>
+
+      {tab === "pantry" && <PantryPanel />}
+      {tab === "list" && (
+      <>
       <p className="muted">
         {doneCount} / {visible.length} 完了
         {hiddenPantryCount > 0 && ` ・ 常備品 ${hiddenPantryCount} 件を非表示`}
@@ -262,7 +306,37 @@ export function ShoppingPage() {
         );
       })}
 
+      {atHome.length > 0 && (
+        <div className="shop-group">
+          <button className="at-home__head" onClick={() => setShowAtHome((v) => !v)}>
+            {showAtHome ? "▾" : "▸"} 家にあるかも（{atHome.length}）
+          </button>
+          {showAtHome && (
+            <ul className="shop-list">
+              {atHome.map((row) => (
+                <li key={row.id} className="shop-item shop-item--at-home">
+                  <span className="shop-item__name">{row.display_name}</span>
+                  <span className="shop-item__qty">
+                    {row.quantity !== null && `${row.quantity}${row.unit ?? ""}`}
+                  </span>
+                  <button
+                    className="btn"
+                    onClick={() => {
+                      if (row.ingredient_id) void removeFromPantry(row.ingredient_id);
+                    }}
+                  >
+                    実は無い
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
       {addForm}
+      </>
+      )}
     </section>
   );
 }

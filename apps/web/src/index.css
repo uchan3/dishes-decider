@@ -389,6 +389,109 @@ a {
   color: var(--muted);
 }
 
+/* --- 買うもの / 冷蔵庫 の切替 --- */
+.segmented {
+  display: flex;
+  gap: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 3px;
+  margin: 8px 0 12px;
+}
+
+.segmented__btn {
+  flex: 1;
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 7px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.segmented__btn--on {
+  background: var(--notice-bg);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+/* --- 家にあるかも --- */
+.at-home__head {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 6px 0;
+  cursor: pointer;
+}
+
+.shop-item--at-home {
+  gap: 10px;
+  padding: 6px 0;
+  color: var(--muted);
+}
+
+.shop-item--at-home .shop-item__name {
+  flex: 1;
+}
+
+/* --- 冷蔵庫 --- */
+.pantry-add {
+  margin: 12px 0;
+}
+
+.pantry-add input {
+  font: inherit;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  width: 100%;
+}
+
+.pantry-candidates {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.pantry-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+
+.pantry-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.pantry-row:last-child {
+  border-bottom: none;
+}
+
+.pantry-row__name {
+  flex: 1;
+}
+
+.pantry-row__meta {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
 /* --- 買い物リストへの手動追加（US-13） --- */
 .add-item {
   margin-top: 24px;

@@ -16,6 +16,7 @@ import { classifyIngredient, normalizeIngredientName, type ShoppingItem } from "
 import { db, type MealPlanRow, type ShoppingItemRow } from "../db/schema.ts";
 import { buildShoppingItems } from "./planning.ts";
 import { newId } from "./ids.ts";
+import { syncPantryWithCheck } from "./pantry.ts";
 import { enqueue } from "./outbox.ts";
 import { flushSoon } from "./outboxSync.ts";
 
@@ -202,7 +203,10 @@ export async function setItemChecked(id: string, isChecked: boolean): Promise<vo
     updated_at: new Date().toISOString(),
   });
   const row = await db.shoppingItems.get(id);
-  if (row) await queuePlanDoc(row.meal_plan_id);
+  if (!row) return;
+  await queuePlanDoc(row.meal_plan_id);
+  // 買った＝家にある。外したら冷蔵庫からも出す（docs/pantry.md の「入り」）。
+  await syncPantryWithCheck(row.ingredient_id, isChecked);
 }
 
 /**

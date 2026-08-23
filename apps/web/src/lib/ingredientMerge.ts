@@ -11,6 +11,7 @@ import { normalizeIngredientName, stripAmountFromIngredientName } from "@recipe-
 import { db, type IngredientRow } from "../db/schema.ts";
 import { enqueue } from "./outbox.ts";
 import { flushSoon } from "./outboxSync.ts";
+import { addToPantry, removeFromPantry } from "./pantry.ts";
 
 /** 候補として挙げた根拠。 */
 export type MergeReason = "same_name" | "contained";
@@ -156,6 +157,12 @@ export async function mergeIngredients(
       await db.ingredients.delete(sourceId);
     },
   );
+
+  // 冷蔵庫に消える側が入っていたら残る側に移す（pantry_items.id は食材 ID そのもの）。
+  if (await db.pantryItems.get(sourceId)) {
+    await addToPantry(targetId);
+    await removeFromPantry(sourceId);
+  }
 
   // 送信順: 参照の付け替えが先、消す側は最後（外部キーの整合を保つ）。
   await enqueue("ingredients", targetId, "put");
