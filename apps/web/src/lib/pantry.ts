@@ -8,6 +8,7 @@
  * 同じ食材を入れても id が一致するので同期が衝突しない。
  */
 
+import { isStalePantryItem } from "@recipe-planner/core";
 import { db, type PantryItemRow } from "../db/schema.ts";
 import { enqueue } from "./outbox.ts";
 import { flushSoon } from "./outboxSync.ts";
@@ -53,6 +54,8 @@ export interface PantryEntry {
   /** 食材名。マスタが消えていれば null（統合や削除の直後など）。 */
   name: string | null;
   category: string | null;
+  /** 入れてから日が経ったか（docs/pantry.md §4）。自動削除はしない。 */
+  isStale: boolean;
 }
 
 /**
@@ -69,7 +72,13 @@ export async function listPantry(): Promise<PantryEntry[]> {
   return items
     .map<PantryEntry>((item) => {
       const master = byId.get(item.id);
-      return { item, name: master?.canonical_name ?? null, category: master?.category ?? null };
+      const category = master?.category ?? null;
+      return {
+        item,
+        name: master?.canonical_name ?? null,
+        category,
+        isStale: isStalePantryItem(item.added_at, category),
+      };
     })
     .sort((a, b) => {
       if (a.name === null) return 1;
@@ -77,4 +86,40 @@ export async function listPantry(): Promise<PantryEntry[]> {
       return (a.category ?? "").localeCompare(b.category ?? "") ||
         a.name.localeCompare(b.name, "ja");
     });
+}
+
+/** 「作った」ときの消し込み候補（docs/pantry.md §4）。 */
+export interface PantryUsage {
+  ingredientId: string;
+  name: string;
+}
+
+/**
+ * そのレシピが使う材料のうち、冷蔵庫に入っているものを返す。
+ *
+ * 「作った」を押したときに**候補として提示**するためのもの。ここでは何も消さない
+ * （自動で消すと、少し余った食材まで在庫から消えて実態とズレるため）。
+ *
+ * 常備品は除く。1 食で醤油を使い切ることはまずなく、毎回聞かれると邪魔なだけ
+ * （在庫の突き合わせ `matchPantry` が常備品を対象外にしているのと同じ理由）。
+ */
+export async function pantryUsedByRecipe(recipeId: string): Promise<PantryUsage[]> {
+  const [pantry, lines, masters] = await Promise.all([
+    db.pantryItems.toArray(),
+    db.recipeIngredients.where("recipe_id").equals(recipeId).toArray(),
+    db.ingredients.toArray(),
+  ]);
+  const inPantry = new Set(pantry.map((row) => row.id));
+  const byId = new Map(masters.map((m) => [m.id, m] as const));
+
+  const seen = new Set<string>();
+  const used: PantryUsage[] = [];
+  for (const line of lines) {
+    const id = line.ingredient_id;
+    if (id === null || seen.has(id) || !inPantry.has(id)) continue;
+    if (byId.get(id)?.is_pantry_staple) continue;
+    seen.add(id);
+    used.push({ ingredientId: id, name: byId.get(id)?.canonical_name ?? line.display_name });
+  }
+  return used;
 }

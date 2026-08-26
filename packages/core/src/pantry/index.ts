@@ -10,7 +10,7 @@
  *   - 「適量」の調味料が在庫にあるかで点が動くのは不自然
  */
 
-import type { RecipeIngredient } from "../types/index.ts";
+import type { IngredientCategory, RecipeIngredient } from "../types/index.ts";
 
 /** 突き合わせの結果。 */
 export interface PantryMatch {
@@ -66,4 +66,41 @@ export function matchPantry(input: PantryMatchInput): PantryMatch {
     missing: targetCount - matched,
     targetCount,
   };
+}
+
+/**
+ * 「そろそろ使った方がいい」と見なすまでの日数（docs/pantry.md §4）。
+ *
+ * 生鮮とそれ以外で分ける。**自動削除はしない**ので、外れても実害は「表示が薄くなる」だけ。
+ */
+export const STALE_DAYS: Readonly<Record<IngredientCategory, number>> = {
+  vegetable: 5,
+  meat: 5,
+  seafood: 5,
+  dairy_egg: 5,
+  dry_goods: 14,
+  frozen: 14,
+  seasoning: 14,
+  other: 14,
+};
+
+/** 1 日のミリ秒。 */
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * 冷蔵庫に入れてから日が経ったか（純粋関数）。
+ *
+ * @param addedAt - 冷蔵庫に入れた時刻（ISO 文字列）
+ * @param category - 食材の売場カテゴリ。不明なら生鮮でない扱い
+ * @param now - 判定時刻（テスト用に注入可能）
+ */
+export function isStalePantryItem(
+  addedAt: string,
+  category: IngredientCategory | null,
+  now: Date = new Date(),
+): boolean {
+  const added = new Date(addedAt).getTime();
+  if (Number.isNaN(added)) return false;
+  const days = STALE_DAYS[category ?? "other"] ?? STALE_DAYS.other;
+  return now.getTime() - added > days * MS_PER_DAY;
 }

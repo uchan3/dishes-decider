@@ -10,6 +10,7 @@ import {
   toggleSlotLock,
 } from "../lib/planning.ts";
 import { isSlotCooked, setSlotCooked } from "../lib/cooking.ts";
+import { pantryUsedByRecipe, removeFromPantry, type PantryUsage } from "../lib/pantry.ts";
 
 const ROLE_LABEL: Record<string, string> = {
   main: "主菜",
@@ -31,6 +32,14 @@ interface Notice {
   noAlternative: number;
 }
 
+/** 「作った」直後に出す、冷蔵庫の消し込み候補（docs/pantry.md §4）。 */
+interface CookedPrompt {
+  recipeTitle: string;
+  used: PantryUsage[];
+  /** 外す対象（既定は全部）。 */
+  checked: Set<string>;
+}
+
 /** 今週の献立画面。生成・スロット再抽選・ロック・日/週単位の作り直しを扱う（US-05/06）。 */
 export function HomePage() {
   const weekStart = startOfWeek(today());
@@ -43,6 +52,7 @@ export function HomePage() {
 
   const [notice, setNotice] = useState<Notice | null>(null);
   const [busy, setBusy] = useState(false);
+  const [cookedPrompt, setCookedPrompt] = useState<CookedPrompt | null>(null);
 
   /** 非同期アクションを busy 管理で包む。plan 更新は useLiveQuery が拾う。 */
   async function run(action: () => Promise<Notice | void>) {
@@ -86,12 +96,38 @@ export function HomePage() {
     });
   }
 
-  /** 「作った」を記録／取り消しする。レシピの調理回数・最終調理日に反映される。 */
+  /**
+   * 「作った」を記録／取り消しする。レシピの調理回数・最終調理日に反映される。
+   * 記録したときは、冷蔵庫から出す候補を提示する（自動では消さない）。
+   */
   function handleCooked(slotId: string, cooked: boolean) {
     if (!plan) return;
     void run(async () => {
       await setSlotCooked(plan, slotId, cooked);
+      if (!cooked) {
+        setCookedPrompt(null);
+        return;
+      }
+      const recipeId = plan.meals
+        .flatMap((m) => m.slots)
+        .find((s) => s.id === slotId)?.recipe_id;
+      if (!recipeId) return;
+      const used = await pantryUsedByRecipe(recipeId);
+      if (used.length === 0) return;
+      setCookedPrompt({
+        recipeTitle: titleById?.get(recipeId) ?? "この料理",
+        used,
+        checked: new Set(used.map((u) => u.ingredientId)),
+      });
     });
+  }
+
+  /** 提示した候補のうち、チェックが残っているものを冷蔵庫から出す。 */
+  function confirmCookedPrompt() {
+    const prompt = cookedPrompt;
+    if (!prompt) return;
+    setCookedPrompt(null);
+    void Promise.all([...prompt.checked].map((id) => removeFromPantry(id)));
   }
 
   if (recipeCount === -1) return <p className="muted">読み込み中…</p>;
@@ -120,6 +156,44 @@ export function HomePage() {
         </button>
       </header>
       <p className="muted">週開始: {weekStart}（レシピ {recipeCount} 件）</p>
+
+      {cookedPrompt && (
+        <div className="notice cooked-prompt">
+          <p>
+            <strong>{cookedPrompt.recipeTitle}</strong> を作りました。使い切ったものを冷蔵庫から出しますか？
+          </p>
+          <ul className="cooked-prompt__list">
+            {cookedPrompt.used.map((u) => (
+              <li key={u.ingredientId}>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={cookedPrompt.checked.has(u.ingredientId)}
+                    onChange={(e) =>
+                      setCookedPrompt((prev) => {
+                        if (!prev) return prev;
+                        const checked = new Set(prev.checked);
+                        if (e.target.checked) checked.add(u.ingredientId);
+                        else checked.delete(u.ingredientId);
+                        return { ...prev, checked };
+                      })
+                    }
+                  />
+                  {u.name}
+                </label>
+              </li>
+            ))}
+          </ul>
+          <div className="btn-row">
+            <button className="btn btn--primary" onClick={confirmCookedPrompt}>
+              冷蔵庫から出す（{cookedPrompt.checked.size}）
+            </button>
+            <button className="btn" onClick={() => setCookedPrompt(null)}>
+              そのままにする
+            </button>
+          </div>
+        </div>
+      )}
 
       {notice && notice.relaxations.length > 0 && (
         <p className="notice">
