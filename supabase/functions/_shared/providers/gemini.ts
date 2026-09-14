@@ -7,6 +7,7 @@
 
 import {
   EXTRACTION_JSON_SCHEMA,
+  ProviderHttpError,
   EXTRACTION_SYSTEM_PROMPT,
   type ExtractionInput,
   type ExtractionProvider,
@@ -92,10 +93,18 @@ function toResult(raw: Record<string, unknown>): {
 
 export class GeminiProvider implements ExtractionProvider {
   readonly name = "gemini" as const;
-  constructor(private readonly apiKey: string) {}
+  /**
+   * @param apiKey - `GEMINI_API_KEY`
+   * @param model - 使うモデル。既定は環境変数 or Flash。**同じ無料枠でも軽量モデルは
+   *   レート上限が別枠**なので、フォールバック段で flash-lite を指定できるようにする
+   */
+  constructor(
+    private readonly apiKey: string,
+    private readonly model: string = GEMINI_MODEL,
+  ) {}
 
   async extract(input: ExtractionInput): Promise<ProviderExtraction> {
-    const res = await fetch(ENDPOINT(GEMINI_MODEL, this.apiKey), {
+    const res = await fetch(ENDPOINT(this.model, this.apiKey), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -109,7 +118,8 @@ export class GeminiProvider implements ExtractionProvider {
       }),
     });
     if (!res.ok) {
-      throw new Error(`Gemini API エラー: HTTP ${res.status} ${await res.text()}`);
+      // ステータスを持たせて投げる（429 や 5xx は呼び出し側が再試行・フォールバックする）。
+      throw new ProviderHttpError(res.status, `Gemini API エラー: HTTP ${res.status} ${await res.text()}`);
     }
     const data = (await res.json()) as GeminiResponse;
     const finishReason = data.candidates?.[0]?.finishReason;
