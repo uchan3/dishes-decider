@@ -43,3 +43,28 @@ export async function hashIngestToken(rawToken: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", data);
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
+
+/**
+ * 値が JWT（`header.payload.signature`）の形をしているか。
+ *
+ * Edge Function は同じ `Authorization: Bearer` ヘッダで 2 種類の資格情報を受け取る:
+ * iOS ショートカットの **ingest トークン**（base64url 1 本・`.` を含まない）と、
+ * PWA の **ログインセッション（Supabase JWT）**。照合先が別（ハッシュ照合 / auth 検証）
+ * なので、取り違えると必ず 401 になる。形で振り分けるための判定をここに置く。
+ *
+ * 署名の検証はしない（それは Supabase の auth に任せる）。あくまで振り分け用。
+ *
+ * @example
+ * ```ts
+ * looksLikeJwt("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig"); // → true
+ * looksLikeJwt(generateIngestToken());                      // → false
+ * ```
+ */
+export function looksLikeJwt(value: string): boolean {
+  const parts = value.split(".");
+  if (parts.length !== 3) return false;
+  // base64url のみ（ingest トークンと同じ文字種だが、区切りが 3 つある点で分かれる）。
+  if (!parts.every((p) => p.length > 0 && /^[A-Za-z0-9_-]+$/.test(p))) return false;
+  // ヘッダは必ず `{"alg":…` の base64url なので "eyJ" で始まる。
+  return parts[0]?.startsWith("eyJ") === true;
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { generateIngestToken, hashIngestToken } from "./index.ts";
+import { generateIngestToken, hashIngestToken, looksLikeJwt } from "./index.ts";
 
 describe("generateIngestToken", () => {
   it("returns a url-safe string with no padding", () => {
@@ -35,5 +35,31 @@ describe("hashIngestToken", () => {
 
   it("differs for different tokens", async () => {
     expect(await hashIngestToken("a")).not.toBe(await hashIngestToken("b"));
+  });
+});
+
+describe("looksLikeJwt", () => {
+  it("recognises a JWT shape", () => {
+    expect(looksLikeJwt("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.c2ln")).toBe(true);
+  });
+
+  it("never mistakes an ingest token for a JWT", () => {
+    for (let i = 0; i < 20; i++) {
+      expect(looksLikeJwt(generateIngestToken())).toBe(false);
+    }
+  });
+
+  it("rejects the wrong number of segments", () => {
+    expect(looksLikeJwt("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0")).toBe(false);
+    expect(looksLikeJwt("eyJhbGciOiJIUzI1NiJ9.a.b.c")).toBe(false);
+  });
+
+  it("rejects empty segments and non-base64url characters", () => {
+    expect(looksLikeJwt("eyJhbGciOiJIUzI1NiJ9..c2ln")).toBe(false);
+    expect(looksLikeJwt("eyJhbGciOiJIUzI1NiJ9.pay load.c2ln")).toBe(false);
+  });
+
+  it("rejects a three-part string that is not a JWT header", () => {
+    expect(looksLikeJwt("aaa.bbb.ccc")).toBe(false);
   });
 });

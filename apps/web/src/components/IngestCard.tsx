@@ -7,6 +7,7 @@ import {
   type IngestTokenRow,
 } from "../lib/ingestTokens.ts";
 import { isStalled, listRecentImportJobs, type ImportJobRow } from "../lib/importJobs.ts";
+import { submitIngest } from "../lib/ingest.ts";
 
 const STATUS_LABEL: Record<ImportJobRow["status"], string> = {
   pending: "処理中",
@@ -77,6 +78,27 @@ export function IngestCard({ userId }: { userId: string }) {
       await reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : "失効に失敗しました");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * 失敗したジョブを同じ URL でやり直す。
+   *
+   * 失敗の多くは一時的なもの（LLM の混雑・ページ側の一時エラー）なので、ここから
+   * 押し直せないと、ユーザーはショートカットを開いて送り直すしかなくなる。
+   * 再取得はサーバー fetch 経路になるため、端末で本文を取る必要があるサイトは
+   * ショートカットからやり直す必要がある（その旨は失敗理由から読み取れる）。
+   */
+  async function handleRetry(job: ImportJobRow) {
+    setBusy(true);
+    setError(null);
+    try {
+      await submitIngest(job.url);
+      await reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "再取り込みに失敗しました");
     } finally {
       setBusy(false);
     }
@@ -157,6 +179,9 @@ export function IngestCard({ userId }: { userId: string }) {
       )}
 
       <h3 className="card__subhead">取り込み状況</h3>
+      <p className="muted">
+        ショートカットからも「追加」画面の URL 取り込みからも、ここに履歴が出ます。
+      </p>
       <div className="btn-row">
         <button className="btn" onClick={() => void reload()} disabled={busy}>
           更新
@@ -180,10 +205,19 @@ export function IngestCard({ userId }: { userId: string }) {
                   <span className="job-item__url">{job.url}</span>
                   <span className="job-item__meta">
                     {shortDateTime(job.created_at)}
-                    {stalled && " ・ 10 分以上応答がありません。送り直してください"}
+                    {stalled && " ・ 10 分以上応答がありません"}
                     {job.error && ` ・ ${job.error}`}
                   </span>
                 </span>
+                {bad && (
+                  <button
+                    className="btn job-item__retry"
+                    onClick={() => void handleRetry(job)}
+                    disabled={busy}
+                  >
+                    再取り込み
+                  </button>
+                )}
               </li>
             );
           })}
