@@ -25,7 +25,7 @@ supabase/functions/   # Deno。レシピ取り込み（抽出）パイプライ�
 ```
 
 - フロント配信: Cloudflare Pages / ローカル DB: Dexie.js (IndexedDB) / BaaS: Supabase Free (Postgres + Auth + Edge Functions + Realtime)
-- LLM: Gemini Flash 無料枠を主、Claude Haiku 4.5 を品質フォールバック。`ExtractionProvider` インタフェースでプロバイダを差し替え可能にする（Edge Function 内）
+- LLM: Gemini Flash 無料枠を主、Claude Haiku 4.5 を品質フォールバック。`ExtractionProvider` インタフェースでプロバイダを差し替え可能にする（Edge Function 内）。**Claude は `ANTHROPIC_API_KEY` を設定したときだけ鎖に入る**（未設定なら月額 0 円の構成のまま）
 - 取り込み導線: iOS ショートカット → Edge Function への POST（Share Extension の代替。Apple 年会費を回避するため）
 
 ## 設計上の核心制約（実装前に必ず理解すること）
@@ -58,7 +58,7 @@ supabase/functions/   # Deno。レシピ取り込み（抽出）パイプライ�
 - フォールバック: `import_jobs` が 10 分以上 `pending` なら再実行する `pg_cron` を置く
 
 ## セキュリティ（実装時の必須事項）
-- **Gemini / YouTube API キーは Edge Function の環境変数にのみ格納。PWA バンドルに絶対含めない**（クライアント JS は誰でも読める）
+- **Gemini / YouTube / Anthropic API キーは Edge Function の環境変数にのみ格納。PWA バンドルに絶対含めない**（クライアント JS は誰でも読める）
 - 全テーブルで RLS `user_id = auth.uid()`。子テーブル（`meals` / `plan_slots` / `shopping_items`）は親経由で判定
 - ショートカット用 ingest トークンは**ハッシュ化して保存**（生トークンは保存しない）。レート制限（1 トークン 60 件/時）とリボーク機能を必須実装
 - 抽出対象 URL は SSRF 対策として内部アドレス（`localhost` / `169.254.*` / プライベート IP）への fetch を拒否
@@ -136,14 +136,14 @@ pnpm --filter @recipe-planner/web typecheck
 - `src/pantry/` — 冷蔵庫とレシピの突き合わせ (`matchPantry`) と古い判定 (`isStalePantryItem` / `STALE_DAYS`)。**献立生成の加点とライブラリの「今作れる」検索が同じ計算を使う**。対象は「マスタ紐付けあり・常備品でない・曖昧量でない」材料だけ。対象 0 件なら score 0（ペナルティにしない）
 - `src/tokens/` — ingest トークンの生成 (`generateIngestToken`) と SHA-256 ハッシュ (`hashIngestToken`)。**発行する PWA と照合する Edge Function が同じ実装を使うことが必須**なのでここに置く
 - `src/similarity/` — 文字 3-gram 類似度（§3.4）。`overlapRatio`/`checkSimilarity`、閾値 `SIMILARITY_THRESHOLDS`(私的0.6/公開0.4)。要約が原文表現をなぞっていないかの機械検査
-- `src/extraction/` — レシピ抽出の**共有型・純粋ロジック**（Deno の Edge Function から利用）。`types.ts`(`ExtractionProvider` 抽象/結果型) / `jsonld.ts`(schema.org/Recipe 直接マッピング=Tier0・LLM不要) / `gate.ts`(`applySimilarityGate`: 超過なら再生成最大2回→破棄) / `html.ts`(JSON-LD ブロック抽出・本文テキスト化、DOM非依存) / `youtube.ts`(watch HTML から概要欄`shortDescription`/タイトル抽出。概要欄は`<script>`内で htmlToText では落ちるため専用) / `url.ts`(`validateExternalUrl`: SSRF 判定) / `source.ts`(`deriveSource`: 原典 URL＋ヒントから収集元を同定。YouTube はチャンネル ID、Web はホスト名が `identifier`) / `prompt.ts`(**Gemini responseSchema 互換**の出力スキーマ＋プロンプト)
+- `src/extraction/` — レシピ抽出の**共有型・純粋ロジック**（Deno の Edge Function から利用）。`fallback.ts`(`createFallbackProvider`: 同一プロバイダを指数バックオフで再試行 → 尽きたら次のプロバイダへ。`ProviderHttpError` のステータスで「待てば直る(429/5xx)」と「何度でも同じ(400/401)」を分ける。`sleep` 注入でテスト可能) / `types.ts`(`ExtractionProvider` 抽象/結果型) / `jsonld.ts`(schema.org/Recipe 直接マッピング=Tier0・LLM不要) / `gate.ts`(`applySimilarityGate`: 超過なら再生成最大2回→破棄) / `html.ts`(JSON-LD ブロック抽出・本文テキスト化、DOM非依存) / `youtube.ts`(watch HTML から概要欄`shortDescription`/タイトル抽出。概要欄は`<script>`内で htmlToText では落ちるため専用) / `url.ts`(`validateExternalUrl`: SSRF 判定) / `source.ts`(`deriveSource`: 原典 URL＋ヒントから収集元を同定。YouTube はチャンネル ID、Web はホスト名が `identifier`) / `prompt.ts`(**Gemini responseSchema 互換**の出力スキーマ＋プロンプト)
 - `src/testing.ts` — テスト専用ファクトリ（`index.ts` からは公開しない）
 - 注意: core の tsconfig は `lib: ["ES2022","WebWorker"]`。`URL`/`fetch` 等の Web 標準グローバルの型のみ入れ、`document`/`window` は含めない（DOM フリー規律を維持）
 
 ### supabase/functions（Deno・抽出パイプライン）
 - **デプロイは Cloudflare とは別系統**。Workers Builds が配信するのは PWA だけで、Edge Function は `supabase functions deploy ingest` が要る。main への push で CI が自動デプロイする（`SUPABASE_ACCESS_TOKEN` が未設定ならスキップ）。**関数を直したのに本番の挙動が変わらないときは、まずデプロイされているかを疑う**
 - DB マイグレーションは自動化していない（影響が大きいため）。`supabase db push` を手動で実行する
-- `_shared/fetch.ts`(SSRF再検証付き安全fetch: リダイレクト手動追跡・タイムアウト・サイズ上限) / `_shared/pipeline.ts`(取得→JSON-LD高速経路 or LLM抽出→類似度ゲート→原文破棄) / `_shared/providers/`(`gemini.ts` 実装・`mock.ts` キー無しローカル検証用) / `_shared/provider-select.ts`(`GEMINI_API_KEY` があれば Gemini、無ければ Mock) / `ingest/index.ts`(POST /ingest: 即202 + `EdgeRuntime.waitUntil()`。**認証は 2 種類**: `x-ingest-token`=ショートカットの長期トークン / `x-supabase-auth`=PWA のセッション JWT。`Authorization: Bearer` で来た場合は core の `looksLikeJwt` で形を見て振り分ける。**ブラウザから叩くので CORS（OPTIONS 応答＋全レスポンスにヘッダ）が必須**)
+- `_shared/fetch.ts`(SSRF再検証付き安全fetch: リダイレクト手動追跡・タイムアウト・サイズ上限) / `_shared/pipeline.ts`(取得→JSON-LD高速経路 or LLM抽出→類似度ゲート→原文破棄) / `_shared/providers/`(`gemini.ts` 実装・`claude.ts` 有料フォールバック(Haiku 4.5・npm の Anthropic SDK・ツール呼び出しで構造化)・`mock.ts` キー無しローカル検証用) / `_shared/provider-select.ts`(**無料から順に落とす鎖**: Gemini Flash → Gemini Flash-Lite(同じキー・別枠のレート上限) → Claude Haiku(`ANTHROPIC_API_KEY` があるときだけ・**ここだけ有料**) → 鍵が無ければ Mock。再試行とフォールバックは core の `createFallbackProvider` が畳むので、パイプラインからは単一プロバイダに見える) / `ingest/index.ts`(POST /ingest: 即202 + `EdgeRuntime.waitUntil()`。**認証は 2 種類**: `x-ingest-token`=ショートカットの長期トークン / `x-supabase-auth`=PWA のセッション JWT。`Authorization: Bearer` で来た場合は core の `looksLikeJwt` で形を見て振り分ける。**ブラウザから叩くので CORS（OPTIONS 応答＋全レスポンスにヘッダ）が必須**)
 - core は `deno.json` の import map で `@recipe-planner/core/extraction` 等を相対 `.ts` にエイリアス
 - `_shared/db.ts`(サービスロールで DB 操作。トークン照合(SHA-256 ハッシュ)・JWT 検証(`resolveJwtUser`。ゲートウェイの `verify_jwt=false` を切ってあるので**関数内で必ず検証する**)・レート制限・`import_jobs`・`recipes`/`recipe_ingredients` 挿入)。挿入時に **`ensureSource`(収集元を同定/作成 → `source_id`)** と **`resolveIngredientIds`(core の索引でマスタ照合、未登録は `classifyIngredient` でカテゴリ推定して作成 → `ingredient_id`)** を通す。ここが埋まらないと買い物リストが全部「その他」に落ちる
 - ingest トークンは **PWA の設定画面から発行**（`lib/ingestTokens.ts`。生成・ハッシュは core の `tokens` を Edge と共有するので照合がずれない）。10 分以上 `pending` のジョブは `fail_stalled_import_jobs()` を pg_cron が 5 分ごとに呼んで failed に落とす（PWA 側も 10 分経過を「停止」と表示する）

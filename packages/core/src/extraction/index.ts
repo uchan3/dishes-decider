@@ -41,5 +41,13 @@ export {
   EXTRACTION_SYSTEM_PROMPT,
   buildRegeneratePrompt,
 } from "./prompt.ts";
+export {
+  createFallbackProvider,
+  isRetryableExtractionError,
+  retryDelayMs,
+  ProviderHttpError,
+  type AttemptFailure,
+  type FallbackOptions,
+} from "./fallback.ts";
 // 抽出パイプラインが閾値を使うため similarity から再エクスポート。
 export { SIMILARITY_THRESHOLDS, checkSimilarity, overlapRatio } from "../similarity/index.ts";

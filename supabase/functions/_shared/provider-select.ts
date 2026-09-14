@@ -1,17 +1,60 @@
 /**
- * 環境に応じた抽出プロバイダの選択。
+ * 環境に応じた抽出プロバイダの選択（techstack §5.3）。
  *
- * `GEMINI_API_KEY` があれば Gemini、無ければ Mock（ローカル配線検証用）。
- * 将来 Claude Haiku フォールバックを Tier 2 として差し込む余地を残す。
+ * **無料のものから順に試し、駄目なら次へ落とす鎖**を組む:
+ *
+ *   1. Gemini Flash … 主経路（無料枠）
+ *   2. Gemini Flash-Lite … 同じキーで**別枠のレート上限**を持つ軽量モデル。
+ *      Flash が混雑して 429 を返す時間帯の逃げ道になる（ここまで料金 0 円）
+ *   3. Claude Haiku … `ANTHROPIC_API_KEY` があるときだけ。**ここだけ有料**
+ *
+ * 鍵が 1 つも無ければ Mock（ローカル配線検証用）。
+ *
+ * これが無かった頃は Gemini が一度 429 を返しただけでジョブが `failed` になり、
+ * ユーザーには手入力しか残らなかった。
  */
 
-import type { ExtractionProvider } from "@recipe-planner/core/extraction";
+import {
+  createFallbackProvider,
+  type ExtractionProvider,
+} from "@recipe-planner/core/extraction";
+import { ClaudeProvider } from "./providers/claude.ts";
 import { GeminiProvider } from "./providers/gemini.ts";
 import { MockProvider } from "./providers/mock.ts";
 
-/** 実行環境からプロバイダを 1 つ選ぶ。 */
+/** Flash が詰まったときに逃がす軽量モデル（レート上限が別枠）。 */
+const GEMINI_LITE_MODEL = Deno.env.get("GEMINI_LITE_MODEL") ?? "gemini-3.5-flash-lite";
+
+/**
+ * 実行環境からプロバイダを組み立てる。
+ *
+ * 返るのは 1 つの {@link ExtractionProvider}。再試行とフォールバックは内側に畳まれて
+ * いるので、パイプライン側は単一プロバイダと同じように扱える。
+ */
 export function selectProvider(): ExtractionProvider {
   const geminiKey = Deno.env.get("GEMINI_API_KEY");
-  if (geminiKey) return new GeminiProvider(geminiKey);
-  return new MockProvider();
+  const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
+
+  const chain: ExtractionProvider[] = [];
+  if (geminiKey) {
+    chain.push(new GeminiProvider(geminiKey));
+    chain.push(new GeminiProvider(geminiKey, GEMINI_LITE_MODEL));
+  }
+  if (anthropicKey) chain.push(new ClaudeProvider(anthropicKey));
+  if (chain.length === 0) chain.push(new MockProvider());
+
+  return createFallbackProvider(chain, {
+    // 1 レシピの取り込みは 5〜15 秒で終わる想定。待ちすぎるとショートカットから見て
+    // 「止まっている」ジョブになるため、再試行は 1 回・待ちは 2 秒に抑える。
+    maxRetries: 1,
+    baseDelayMs: 2000,
+    onAttemptFailed: ({ provider, attempt, error, willRetry, willFallBack }) => {
+      const next = willRetry ? "retry" : willFallBack ? "fallback" : "give-up";
+      console.log(`[extract] ${provider} attempt=${attempt} → ${next}: ${error.message}`);
+    },
+    onSuccess: ({ provider, attempt }) => {
+      // どのプロバイダが実際に使われたかを残す（有料経路が走ったかを後から追える）。
+      console.log(`[extract] ${provider} attempt=${attempt} → ok`);
+    },
+  });
 }
