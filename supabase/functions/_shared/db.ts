@@ -58,6 +58,23 @@ export async function resolveIngestToken(
   return data.user_id as string;
 }
 
+/**
+ * Supabase の JWT（PWA のログインセッション）を検証し user_id を返す。無効なら null。
+ *
+ * PWA は ingest トークンを持たずに取り込みを依頼できる（画面から URL を貼る経路）。
+ * ゲートウェイの JWT 検証は `verify_jwt = false` で切ってあるため、**ここで必ず
+ * 検証する**。サービスロールのクライアントでも `auth.getUser(jwt)` は渡した JWT を
+ * auth サーバに問い合わせるので、他人の JWT を騙ることはできない。
+ */
+export async function resolveJwtUser(db: SupabaseClient, jwt: string): Promise<string | null> {
+  const { data, error } = await db.auth.getUser(jwt);
+  if (error || !data?.user) {
+    console.log(`[ingest] jwt rejected: ${error?.message ?? "no user"}`);
+    return null;
+  }
+  return data.user.id;
+}
+
 /** 直近1時間のジョブ数がレート上限（既定60）以内かを返す。 */
 export async function withinRateLimit(
   db: SupabaseClient,

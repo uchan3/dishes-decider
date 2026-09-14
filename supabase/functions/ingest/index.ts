@@ -1,20 +1,25 @@
 /**
  * POST /ingest — レシピ取り込みエンドポイント（architecture §3）。
  *
- * iOS ショートカット / PWA から `x-ingest-token` と `{ url }`（任意で `content`）を
- * 受け取り、即 202 を返してから `EdgeRuntime.waitUntil()` で抽出を継続する。
+ * iOS ショートカット / PWA から `{ url }`（任意で `content`）を受け取り、即 202 を
+ * 返してから `EdgeRuntime.waitUntil()` で抽出を継続する。
  *
  * 2 経路:
  *   - `{ url }` のみ → サーバー側で fetch して抽出（通常サイト）
  *   - `{ url, content, contentKind }` → 端末で取得済みの本文から抽出（サーバー fetch を
  *     行わない）。Cloudflare 等の Bot 対策サイトや YouTube 概要欄はこちらを使う。
  *
- * フロー: トークン照合 → レート制限 → import_jobs(pending) → 202 →
+ * 認証は 2 種類（{@link readCredential}）:
+ *   - **ingest トークン**（`x-ingest-token`）… iOS ショートカット。期限の無い長期トークン
+ *   - **Supabase JWT**（`x-supabase-auth`）… PWA からの取り込み。ログイン中のセッション
+ *
+ * フロー: 資格情報の照合 → レート制限 → import_jobs(pending) → 202 →
  *   （背景）抽出 → 類似度ゲート → 収集元の同定・食材マスタ紐付け → recipes 挿入 →
  *   job 更新。結果は Realtime で PWA に届く。
  */
 
 import { validateExternalUrl } from "@recipe-planner/core/extraction";
+import { looksLikeJwt } from "@recipe-planner/core/tokens";
 import { extractFromContent, runExtraction, type ContentKind } from "../_shared/pipeline.ts";
 import { selectProvider } from "../_shared/provider-select.ts";
 import {
@@ -23,6 +28,7 @@ import {
   hashToken,
   persistExtraction,
   resolveIngestToken,
+  resolveJwtUser,
   serviceClient,
   withinRateLimit,
 } from "../_shared/db.ts";
@@ -42,32 +48,62 @@ function runInBackground(promise: Promise<unknown>): void {
   else void promise;
 }
 
+/**
+ * CORS ヘッダ。PWA（Cloudflare のドメイン）から Supabase のドメインを叩くため、
+ * これが無いとブラウザからの取り込みはプリフライトで落ちる。
+ *
+ * 資格情報は Cookie ではなく明示的なヘッダで渡すので `*` で足りる
+ * （ブラウザが勝手に付ける認証情報が無く、オリジンを絞る意味が薄いため）。
+ */
+const CORS_HEADERS: Record<string, string> = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "POST, OPTIONS",
+  "access-control-allow-headers":
+    "authorization, x-ingest-token, x-supabase-auth, apikey, content-type",
+  "access-control-max-age": "86400",
+};
+
 const json = (body: unknown, status: number): Response =>
   new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json" },
+    headers: { ...CORS_HEADERS, "content-type": "application/json" },
   });
 
+/** 受け取った資格情報。照合先が違うので種別を持たせる。 */
+interface Credential {
+  kind: "token" | "jwt";
+  value: string;
+}
+
 /**
- * ingest トークンを取り出す。独自ヘッダ `x-ingest-token` を優先し、
- * 無ければ `Authorization: Bearer` にフォールバックする。
+ * 資格情報を取り出す。優先順位は 独自ヘッダ → `Authorization: Bearer`。
  *
  * Supabase ゲートウェイは `Authorization` を自前の用途で差し替えることがあるため、
- * 独自ヘッダを主経路にする（iOS ショートカットも独自ヘッダを送れる）。
+ * 独自ヘッダを主経路にする（iOS ショートカットも PWA も独自ヘッダを送れる）。
+ * `Authorization` で来た場合は形で振り分ける（JWT は `.` 区切り 3 セグメント）。
  */
-function ingestToken(req: Request): string | null {
-  const custom = req.headers.get("x-ingest-token");
-  if (custom && custom.trim()) return custom.trim();
-  const auth = req.headers.get("authorization") ?? "";
-  const m = auth.match(/^Bearer\s+(.+)$/i);
-  return m ? (m[1] as string).trim() : null;
+function readCredential(req: Request): Credential | null {
+  const token = req.headers.get("x-ingest-token")?.trim();
+  if (token) return { kind: "token", value: token };
+
+  const jwt = req.headers.get("x-supabase-auth")?.trim();
+  if (jwt) return { kind: "jwt", value: jwt };
+
+  const m = (req.headers.get("authorization") ?? "").match(/^Bearer\s+(.+)$/i);
+  if (m) {
+    const value = (m[1] as string).trim();
+    return { kind: looksLikeJwt(value) ? "jwt" : "token", value };
+  }
+  return null;
 }
 
 Deno.serve(async (req: Request) => {
+  // ブラウザからの POST はプリフライトが先に来る。
+  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS });
   if (req.method !== "POST") return json({ error: "POST のみ許可" }, 405);
 
-  const token = ingestToken(req);
-  if (!token) return json({ error: "ingest トークンが必要です" }, 401);
+  const credential = readCredential(req);
+  if (!credential) return json({ error: "認証情報が必要です" }, 401);
 
   let payload: { url?: string; content?: string; contentKind?: string };
   try {
@@ -88,12 +124,18 @@ Deno.serve(async (req: Request) => {
 
   const db = serviceClient();
 
-  const userId = await resolveIngestToken(db, token);
+  const userId =
+    credential.kind === "jwt"
+      ? await resolveJwtUser(db, credential.value)
+      : await resolveIngestToken(db, credential.value);
   if (!userId) {
-    // デバッグ: 受信トークンのハッシュ先頭のみログ（照合ずれの切り分け用。全体は出さない）。
-    const dbg = await debugHashPrefix(token);
-    console.log(`[ingest] token mismatch: len=${token.length} hashPrefix=${dbg}`);
-    return json({ error: "無効な ingest トークンです" }, 401);
+    if (credential.kind === "token") {
+      // デバッグ: 受信トークンのハッシュ先頭のみログ（照合ずれの切り分け用。全体は出さない）。
+      const dbg = await debugHashPrefix(credential.value);
+      console.log(`[ingest] token mismatch: len=${credential.value.length} hashPrefix=${dbg}`);
+      return json({ error: "無効な ingest トークンです" }, 401);
+    }
+    return json({ error: "ログインの有効期限が切れています。入り直してください" }, 401);
   }
 
   if (!(await withinRateLimit(db, userId))) {

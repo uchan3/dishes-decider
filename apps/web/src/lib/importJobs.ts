@@ -45,3 +45,20 @@ export async function listRecentImportJobs(limit = 10): Promise<ImportJobRow[]> 
   if (error) throw new Error(`取り込み状況の取得に失敗しました: ${error.message}`);
   return (data ?? []) as ImportJobRow[];
 }
+
+/**
+ * ジョブを 1 件取得する。取り込み依頼の直後に結果を待つ用途（見つからなければ null）。
+ *
+ * Realtime の購読でも完了は届くが、**取り込み中の画面はこの単発取得で追う**。
+ * 購読が張れていない端末（Realtime が落ちている等）でも結果を見せられるようにするため。
+ */
+export async function getImportJob(id: string): Promise<ImportJobRow | null> {
+  if (!isSupabaseConfigured) return null;
+  const { data, error } = await supabase
+    .from("import_jobs")
+    .select("id, url, status, recipe_id, error, created_at, updated_at")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw new Error(`取り込み状況の取得に失敗しました: ${error.message}`);
+  return (data as ImportJobRow | null) ?? null;
+}

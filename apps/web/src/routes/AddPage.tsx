@@ -7,6 +7,7 @@ import type {
   DishRole,
   IngredientCategory,
 } from "@recipe-planner/core";
+import { UrlIngestCard } from "../components/UrlIngestCard.tsx";
 import { db } from "../db/schema.ts";
 import { useAuth } from "../lib/auth.tsx";
 import { matchMaster } from "../lib/ingredients.ts";
@@ -167,6 +168,13 @@ export function AddPage() {
   return (
     <section>
       <h1>レシピを追加</h1>
+
+      <UrlIngestCard />
+
+      <h2 className="form__section">手入力で登録</h2>
+      <p className="muted">
+        URL が無いレシピ（本・家庭の味）はこちらから。材料だけ入れれば買い物リストに乗ります。
+      </p>
 
       {errors.length > 0 && (
         <div className="notice notice--warn">

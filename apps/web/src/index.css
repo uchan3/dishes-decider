@@ -1034,11 +1034,20 @@ a {
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  flex: 1;
 }
 
 .job-item__url {
   font-size: 0.85rem;
   word-break: break-all;
+}
+
+/* 失敗したジョブの「再取り込み」。行の右端に小さく置く。 */
+.job-item__retry {
+  align-self: center;
+  white-space: nowrap;
+  padding: 6px 10px;
+  font-size: 0.78rem;
 }
 
 /* --- 生成設定 --- */

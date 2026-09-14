@@ -98,10 +98,12 @@ pnpm --filter @recipe-planner/web typecheck
 - SPA fallback は `not_found_handling` が担う。**`_redirects` は置かないこと**（Workers Static Assets も読み込み、`/* /index.html 200` は「無限ループ」判定でデプロイが失敗する code:100324）
 
 ### apps/web の構成
-- Vite + React 19 + React Router v7 + vite-plugin-pwa。UI は `src/routes/`（Home=献立生成 / Library / RecipeDetail=`/recipe/:id` / Add=手動レシピ登録 / Shopping / Settings）、共通シェルは `src/components/Layout.tsx`（下部タブ）
+- Vite + React 19 + React Router v7 + vite-plugin-pwa。UI は `src/routes/`（Home=献立生成 / Library / RecipeDetail=`/recipe/:id` / Add=URL 取り込み＋手動レシピ登録 / Shopping / Settings）、共通シェルは `src/components/Layout.tsx`（下部タブ）
 - レシピ詳細(`/recipe/:id`): 材料・原典リンク・タイトル/お気に入り/タグ編集・除外(「もう出さないで」)・削除(2段階確認)。手順は原典が YouTube なら iframe 埋め込み(`lib/youtube.ts`)、不可なら原典リンク(§3.6/§3.7)。編集/削除は `lib/recipeEdit.ts`。**`updateRecipe`/`deleteRecipe` は Supabase 設定時に Supabase も更新/削除**（Dexie だけ変更すると次回プルで巻き戻る/復活するため）
 - 手動レシピ登録は `src/lib/recipeForm.ts`（保存）＋ `src/lib/ingredients.ts`（core の `createIngredientIndex`/`matchIngredientMaster` を Dexie 行に当てる薄いアダプタ。未ヒットは新規マスタ作成、売場の初期値は `classifyIngredient`）
 - `src/lib/ingestTokens.ts` / `src/lib/importJobs.ts` / `components/IngestCard.tsx` — ショートカット用トークンの発行・失効と、取り込みジョブの状況表示（設定画面）。**生トークンは発行時に一度だけ表示**し DB にはハッシュのみ。`isStalled`（10 分以上 pending）は純粋関数でテスト有り
+- `src/lib/ingest.ts` / `components/UrlIngestCard.tsx` — **PWA から URL を貼って取り込む**導線（「追加」画面の先頭）。ショートカットが無い端末（PC / Android）の入口。`normalizeIngestUrl` は純粋関数（テスト有り）で、共有テキストから URL を拾い・末尾の句読点を落とし・**送信前に core の `validateExternalUrl` で SSRF 条件を弾く**（Edge と同じ基準なので往復が減る）。認証は**ログイン中のセッション JWT**（ブラウザに長期トークンを置かないため）。依頼後は `getImportJob` を 2.5 秒ごとに見て結果まで画面に出す（Realtime が張れていない端末でも完了が分かるように）。設定画面の取り込み履歴からは失敗ジョブを `submitIngest` で**再取り込み**できる
+- ブラウザからはページ本文を取れない（CORS）ため PWA の取り込みは**常にサーバー fetch 経路**。Bot 対策の厳しいサイトはここで失敗しうるので、その場合は端末で本文を取るショートカット経路に逃がす
 - `src/lib/recipeSearch.ts` — ライブラリの検索・絞り込み・並べ替え(F-01-3)。`filterRecipes` は純粋関数（テスト有り）。検索は**タイトル・タグ・材料名**が対象で、照合は `normalizeIngredientName` を通すのでカナ/空白の揺れを吸収する。絞り込みは役割・ソース・調理時間・お気に入り（**調理時間が不明なレシピは落とさない**）
 - `src/lib/ingredientMerge.ts` — 食材マスタの統合(§5.3)。`mergeIngredients` が材料行・買い物リスト項目の参照を付け替え、消える側の名前を `aliases` に引き継いで削除する（送信キュー経由で Supabase にも反映。削除は最後に送る）。候補提示 `suggestMerges` は**わざと保守的**で、正規化キー一致か「同カテゴリで名前を丸ごと含む」場合のみ（包含のときは短い＝一般的な名前を残す）。3-gram 類似度は「牛こま切れ肉/豚こま切れ肉」を似ていると誤判定するため使わない。`tidyIngredientNames` は分量込みの名前を一括で整える（きれいな同名があれば統合、無ければ改名）
 - `src/lib/relinkSources.ts` — S1（取り込み時のソース自動作成）より前に取り込んだレシピに、原典 URL から収集元を割り当てる保守処理。設定画面のソース欄に未割当件数と実行ボタンを出す。`renameSource` でソース名の変更もできる（**YouTube のチャンネルは URL だけでは分からないため既存分は「YouTube」1 つにまとまる**。チャンネル別に分かれるのは `YOUTUBE_API_KEY` 設定済みの新規取り込みのみ）
@@ -141,9 +143,9 @@ pnpm --filter @recipe-planner/web typecheck
 ### supabase/functions（Deno・抽出パイプライン）
 - **デプロイは Cloudflare とは別系統**。Workers Builds が配信するのは PWA だけで、Edge Function は `supabase functions deploy ingest` が要る。main への push で CI が自動デプロイする（`SUPABASE_ACCESS_TOKEN` が未設定ならスキップ）。**関数を直したのに本番の挙動が変わらないときは、まずデプロイされているかを疑う**
 - DB マイグレーションは自動化していない（影響が大きいため）。`supabase db push` を手動で実行する
-- `_shared/fetch.ts`(SSRF再検証付き安全fetch: リダイレクト手動追跡・タイムアウト・サイズ上限) / `_shared/pipeline.ts`(取得→JSON-LD高速経路 or LLM抽出→類似度ゲート→原文破棄) / `_shared/providers/`(`gemini.ts` 実装・`mock.ts` キー無しローカル検証用) / `_shared/provider-select.ts`(`GEMINI_API_KEY` があれば Gemini、無ければ Mock) / `ingest/index.ts`(POST /ingest: 即202 + `EdgeRuntime.waitUntil()`)
+- `_shared/fetch.ts`(SSRF再検証付き安全fetch: リダイレクト手動追跡・タイムアウト・サイズ上限) / `_shared/pipeline.ts`(取得→JSON-LD高速経路 or LLM抽出→類似度ゲート→原文破棄) / `_shared/providers/`(`gemini.ts` 実装・`mock.ts` キー無しローカル検証用) / `_shared/provider-select.ts`(`GEMINI_API_KEY` があれば Gemini、無ければ Mock) / `ingest/index.ts`(POST /ingest: 即202 + `EdgeRuntime.waitUntil()`。**認証は 2 種類**: `x-ingest-token`=ショートカットの長期トークン / `x-supabase-auth`=PWA のセッション JWT。`Authorization: Bearer` で来た場合は core の `looksLikeJwt` で形を見て振り分ける。**ブラウザから叩くので CORS（OPTIONS 応答＋全レスポンスにヘッダ）が必須**)
 - core は `deno.json` の import map で `@recipe-planner/core/extraction` 等を相対 `.ts` にエイリアス
-- `_shared/db.ts`(サービスロールで DB 操作。トークン照合(SHA-256 ハッシュ)・レート制限・`import_jobs`・`recipes`/`recipe_ingredients` 挿入)。挿入時に **`ensureSource`(収集元を同定/作成 → `source_id`)** と **`resolveIngredientIds`(core の索引でマスタ照合、未登録は `classifyIngredient` でカテゴリ推定して作成 → `ingredient_id`)** を通す。ここが埋まらないと買い物リストが全部「その他」に落ちる
+- `_shared/db.ts`(サービスロールで DB 操作。トークン照合(SHA-256 ハッシュ)・JWT 検証(`resolveJwtUser`。ゲートウェイの `verify_jwt=false` を切ってあるので**関数内で必ず検証する**)・レート制限・`import_jobs`・`recipes`/`recipe_ingredients` 挿入)。挿入時に **`ensureSource`(収集元を同定/作成 → `source_id`)** と **`resolveIngredientIds`(core の索引でマスタ照合、未登録は `classifyIngredient` でカテゴリ推定して作成 → `ingredient_id`)** を通す。ここが埋まらないと買い物リストが全部「その他」に落ちる
 - ingest トークンは **PWA の設定画面から発行**（`lib/ingestTokens.ts`。生成・ハッシュは core の `tokens` を Edge と共有するので照合がずれない）。10 分以上 `pending` のジョブは `fail_stalled_import_jobs()` を pg_cron が 5 分ごとに呼んで failed に落とす（PWA 側も 10 分経過を「停止」と表示する）
 - ローカルに deno が無くても CI が `deno check` する。純粋ロジック(SSRF/JSON-LD/ゲート/HTML)は core に置き vitest でカバー済み
 
