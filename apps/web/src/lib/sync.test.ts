@@ -153,7 +153,8 @@ describe("pullLibrary", () => {
       is_pantry_staple: false,
       sort_order: 0,
     });
-    setServer({});
+    // サーバーに他の行は残っている（全部空だと安全弁が働いて削除しない）。
+    setServer({ recipes: [recipe(RECIPE_A, "肉じゃが")] });
 
     await pullLibrary();
 
@@ -168,7 +169,8 @@ describe("pullLibrary", () => {
       op: "put",
       created_at: new Date().toISOString(),
     });
-    setServer({});
+    // サーバーには別のレシピがある（空応答の安全弁ではなくキュー保護を見る）。
+    setServer({ recipes: [recipe(RECIPE_B, "生姜焼き")] });
 
     await pullLibrary();
 
@@ -185,7 +187,7 @@ describe("pullLibrary", () => {
       is_enabled: true,
       created_at: "2026-09-01T00:00:00.000Z",
     });
-    setServer({ sources: [] });
+    setServer({ sources: [], recipes: [recipe(RECIPE_A, "肉じゃが")] });
 
     await pullLibrary();
 
@@ -194,8 +196,8 @@ describe("pullLibrary", () => {
 
   it("mirrors the fridge in both directions", async () => {
     await db.pantryItems.put({ id: ONION, added_at: "2026-09-01T00:00:00.000Z" });
-    // 相手が使い切って冷蔵庫から出した状態。
-    setServer({ pantry_items: [] });
+    // 相手が使い切って冷蔵庫から出した状態（ライブラリ自体は残っている）。
+    setServer({ recipes: [recipe(RECIPE_A, "肉じゃが")], pantry_items: [] });
 
     await pullLibrary();
 
@@ -210,7 +212,7 @@ describe("pullLibrary", () => {
       op: "put",
       created_at: new Date().toISOString(),
     });
-    setServer({ pantry_items: [] });
+    setServer({ recipes: [recipe(RECIPE_A, "肉じゃが")], pantry_items: [] });
 
     await pullLibrary();
 
@@ -230,6 +232,28 @@ describe("pullLibrary", () => {
     await pullLibrary();
 
     expect(await db.recipes.get(RECIPE_A)).toBeUndefined();
+  });
+
+
+  it("skips deletions when the server answers empty across the board (事故の形をした応答)", async () => {
+    // セッション切れ等で全テーブルが空で返ると、素直に反映すればライブラリが全滅する。
+    await db.recipes.put(recipe(RECIPE_A, "肉じゃが"));
+    await db.ingredients.put({
+      id: ONION,
+      canonical_name: "玉ねぎ",
+      kana: null,
+      aliases: [],
+      category: "vegetable",
+      default_unit: null,
+      is_pantry_staple: false,
+      sort_order: 0,
+    });
+    setServer({});
+
+    await pullLibrary();
+
+    expect(await db.recipes.get(RECIPE_A)).toBeDefined();
+    expect(await db.ingredients.get(ONION)).toBeDefined();
   });
 
   it("reads past the 1000-row page limit before deciding what is missing", async () => {

@@ -211,6 +211,21 @@ export async function pullLibrary(): Promise<number> {
     ),
   } satisfies Record<LocalTable, Record<string, unknown>[]>;
 
+  // 安全弁: サーバーが「全テーブル空」を返したのにローカルには行がある、という
+  // 応答は正常な同期ではなく事故（セッション切れ・プロジェクト取り違え等）の形をして
+  // いる。**この一回だけで手元のライブラリが丸ごと消える**ので、削除は見送る。
+  // 本当に空なら upsert は何もせず、次のプルで整合する。
+  const serverEmpty =
+    sources.length === 0 &&
+    ingredients.length === 0 &&
+    recipes.length === 0 &&
+    lines.length === 0 &&
+    pantry.length === 0;
+  const localHasRows = Object.values(localIds).some((ids) => ids.length > 0);
+  if (serverEmpty && localHasRows) {
+    console.warn("[sync] サーバーが空の応答を返したため削除の反映を見送りました");
+  }
+
   const doomed = {
     sources: idsToDelete(
       localIds.sources,
@@ -255,11 +270,13 @@ export async function pullLibrary(): Promise<number> {
 
       // 相手の端末での削除・食材マスタの統合をこちらにも反映する。
       // ここでの削除は「サーバーの状態を写している」だけなので outbox には積まない。
-      await db.sources.bulkDelete(doomed.sources);
-      await db.ingredients.bulkDelete(doomed.ingredients);
-      await db.recipes.bulkDelete(doomed.recipes);
-      await db.recipeIngredients.bulkDelete(doomed.recipeIngredients);
-      await db.pantryItems.bulkDelete(doomed.pantryItems);
+      if (!(serverEmpty && localHasRows)) {
+        await db.sources.bulkDelete(doomed.sources);
+        await db.ingredients.bulkDelete(doomed.ingredients);
+        await db.recipes.bulkDelete(doomed.recipes);
+        await db.recipeIngredients.bulkDelete(doomed.recipeIngredients);
+        await db.pantryItems.bulkDelete(doomed.pantryItems);
+      }
     },
   );
 
