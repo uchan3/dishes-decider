@@ -18,6 +18,11 @@ import {
   type SyncTable,
 } from "./outbox.ts";
 import { buildPlanDocument, pushPlanDocument, type PlanDocument } from "./planSync.ts";
+import {
+  buildSettingsDocument,
+  pushSettingsDocument,
+  type SettingsDocument,
+} from "./settingsSync.ts";
 
 /** `user_id` 列を持つテーブル（挿入時に所有者を明示しないと RLS で弾かれる）。 */
 const OWNED_TABLES: ReadonlySet<SyncTable> = new Set<SyncTable>([
@@ -28,13 +33,16 @@ const OWNED_TABLES: ReadonlySet<SyncTable> = new Set<SyncTable>([
 ]);
 
 /**
- * 送信対象の読み出し。週ドキュメントだけは Dexie の 1 行ではなく組み立てて渡し、
- * それ以外は同名テーブルから 1 行取る。
+ * 送信対象の読み出し。ドキュメント系（週・設定）だけは Dexie の 1 行ではなく
+ * 組み立てて渡し、それ以外は同名テーブルから 1 行取る。
  */
 const loadRow: RowLoader = async (table, id) => {
   if (table === "planDocs") {
     const doc = await buildPlanDocument(id);
     return doc === null ? undefined : (doc as unknown as Record<string, unknown>);
+  }
+  if (table === "settingsDoc") {
+    return (await buildSettingsDocument()) as unknown as Record<string, unknown>;
   }
   return (await db.table(table).get(id)) as Record<string, unknown> | undefined;
 };
@@ -45,6 +53,10 @@ export function supabaseSender(userId: string): OutboxSender {
     async put(table, row) {
       if (table === "planDocs") {
         await pushPlanDocument(userId, row as unknown as PlanDocument);
+        return;
+      }
+      if (table === "settingsDoc") {
+        await pushSettingsDocument(userId, row as unknown as SettingsDocument);
         return;
       }
       const payload: Record<string, unknown> = OWNED_TABLES.has(table)
@@ -59,8 +71,8 @@ export function supabaseSender(userId: string): OutboxSender {
       if (error) throw new Error(`${SYNC_TABLES[table]} の送信に失敗: ${error.message}`);
     },
     async remove(table, id) {
-      // 週ドキュメントは削除しない（献立を消す導線が無く、作り直しは put で上書きされる）。
-      if (table === "planDocs") return;
+      // ドキュメント系は削除しない（消す導線が無く、変更は put で上書きされる）。
+      if (table === "planDocs" || table === "settingsDoc") return;
       const { error } = await supabase.from(SYNC_TABLES[table]).delete().eq("id", id);
       if (error) throw new Error(`${SYNC_TABLES[table]} の削除に失敗: ${error.message}`);
     },
