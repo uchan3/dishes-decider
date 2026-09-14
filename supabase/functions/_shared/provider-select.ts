@@ -16,11 +16,29 @@
 
 import {
   createFallbackProvider,
+  type ExtractionInput,
   type ExtractionProvider,
+  type ProviderExtraction,
 } from "@recipe-planner/core/extraction";
-import { ClaudeProvider } from "./providers/claude.ts";
 import { GeminiProvider } from "./providers/gemini.ts";
 import { MockProvider } from "./providers/mock.ts";
+
+/**
+ * Claude を**実際に使うときだけ** SDK を読み込むプロバイダ。
+ *
+ * Anthropic SDK は小さくないので、取り込みのたびに評価すると鎖の 1 段目しか使わない
+ * 大多数のリクエストが余計なコールドスタートを払う。フォールバックが走った瞬間に
+ * 動的 import する（これが呼ばれない限り SDK は評価されない）。
+ */
+function lazyClaudeProvider(apiKey: string): ExtractionProvider {
+  return {
+    name: "claude",
+    async extract(input: ExtractionInput): Promise<ProviderExtraction> {
+      const { ClaudeProvider } = await import("./providers/claude.ts");
+      return new ClaudeProvider(apiKey).extract(input);
+    },
+  };
+}
 
 /** Flash が詰まったときに逃がす軽量モデル（レート上限が別枠）。 */
 const GEMINI_LITE_MODEL = Deno.env.get("GEMINI_LITE_MODEL") ?? "gemini-3.5-flash-lite";
@@ -40,7 +58,7 @@ export function selectProvider(): ExtractionProvider {
     chain.push(new GeminiProvider(geminiKey));
     chain.push(new GeminiProvider(geminiKey, GEMINI_LITE_MODEL));
   }
-  if (anthropicKey) chain.push(new ClaudeProvider(anthropicKey));
+  if (anthropicKey) chain.push(lazyClaudeProvider(anthropicKey));
   if (chain.length === 0) chain.push(new MockProvider());
 
   return createFallbackProvider(chain, {
