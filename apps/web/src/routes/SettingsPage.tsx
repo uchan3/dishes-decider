@@ -149,7 +149,7 @@ export function SettingsPage() {
   /** 生成設定を 1 項目だけ更新して保存する（保存時に正規化される）。 */
   function updatePlanning(patch: Partial<PlanningSettings>) {
     if (!planning) return;
-    void savePlanningSettings({ ...planning, ...patch });
+    void savePlanningSettings({ ...planning, ...patch }).then(() => flushNow());
   }
 
   /** 常備品フラグを切り替える。買い物リストの既定表示から外れる（US-10）。 */
@@ -163,7 +163,7 @@ export function SettingsPage() {
     if (!weekdayTemplates) return;
     const next = [...weekdayTemplates] as WeekdayTemplates;
     next[index] = templateId;
-    void saveWeekdayTemplates(next);
+    void saveWeekdayTemplates(next).then(() => flushNow());
   }
 
   async function handleRelinkSources() {

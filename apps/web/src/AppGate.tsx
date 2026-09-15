@@ -12,6 +12,7 @@ import { LoginPage } from "./routes/LoginPage.tsx";
 import { pullLibrary, subscribeImports } from "./lib/sync.ts";
 import { startOutboxSync } from "./lib/outboxSync.ts";
 import { pullPlans, subscribePlans } from "./lib/planSync.ts";
+import { pullSettings, subscribeSettings } from "./lib/settingsSync.ts";
 
 export function AppGate() {
   const { ready, userId, configured } = useAuth();
@@ -28,11 +29,16 @@ export function AppGate() {
     const unsubscribePlans = subscribePlans((applied) => {
       if (applied > 0) console.log(`[sync] plans updated: ${applied}`);
     });
+    // 設定（曜日テンプレ・生成設定）も相手の端末と揃える。これが無いと二人が
+    // 別々の構成で週を生成してしまう。
+    void pullSettings().catch((e) => console.error("[sync] pullSettings 失敗", e));
+    const unsubscribeSettings = subscribeSettings(() => console.log("[sync] settings updated"));
     // ローカルに溜まった変更を送る（オンライン復帰時にも自動で流れる）。
     const stopOutbox = startOutboxSync(userId);
     return () => {
       unsubscribe();
       unsubscribePlans();
+      unsubscribeSettings();
       stopOutbox();
     };
   }, [configured, userId]);

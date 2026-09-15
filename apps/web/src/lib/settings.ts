@@ -1,6 +1,7 @@
 /** アプリ設定の読み書き（Dexie の settings キー・バリューストア）。 */
 
 import { db } from "../db/schema.ts";
+import { enqueue } from "./outbox.ts";
 import {
   DEFAULT_WEEKDAY_TEMPLATES,
   type TemplateId,
@@ -9,6 +10,11 @@ import {
 
 const KEY_WEEKDAY_TEMPLATES = "weekday_templates";
 const KEY_PLANNING = "planning_settings";
+/** 設定ドキュメント全体の更新時刻（端末間の Last-Write-Wins に使う）。 */
+const KEY_UPDATED_AT = "settings_updated_at";
+
+/** 送信キュー上での設定ドキュメントの ID（1 ユーザー 1 行なので固定）。 */
+export const SETTINGS_DOC_ID = "settings";
 
 const VALID_IDS = new Set<TemplateId>([
   "standard",
@@ -37,6 +43,49 @@ export async function loadWeekdayTemplates(): Promise<WeekdayTemplates> {
 /** 曜日別テンプレ割り当てを保存する。 */
 export async function saveWeekdayTemplates(value: WeekdayTemplates): Promise<void> {
   await db.settings.put({ key: KEY_WEEKDAY_TEMPLATES, value });
+  await touchSettings();
+}
+
+/**
+ * 設定の更新時刻を「今」にする。
+ *
+ * 端末間の突き合わせは**ドキュメント単位**（曜日テンプレ＋生成設定でひとつ）なので、
+ * どの項目を変えても同じ時刻を進める。二人が同時に別々の項目を変えると片方が負けるが、
+ * 設定を同時に触ることは実質なく、買い物リストのような項目単位マージは要らない。
+ *
+ * 送信キューに積むのもここ 1 か所に集約する（保存経路が増えても積み忘れない）。
+ * 実際に送るのは `outboxSync` なので、オフラインでも設定変更は成功する。
+ */
+export async function touchSettings(at: string = new Date().toISOString()): Promise<void> {
+  await db.settings.put({ key: KEY_UPDATED_AT, value: at });
+  await enqueue("settingsDoc", SETTINGS_DOC_ID, "put");
+}
+
+/** 設定の更新時刻（未保存なら空文字＝最も古い）。 */
+export async function settingsUpdatedAt(): Promise<string> {
+  const row = await db.settings.get(KEY_UPDATED_AT);
+  return typeof row?.value === "string" ? row.value : "";
+}
+
+/**
+ * 受信した設定を Dexie に書く（**更新時刻も相手の値に合わせる**）。
+ *
+ * ここで `touchSettings()` を呼んでしまうと「受け取った瞬間が自分の更新時刻」になり、
+ * 古い設定を新しい変更として送り返してしまう。
+ */
+export async function applySettings(
+  templates: WeekdayTemplates,
+  planning: PlanningSettings,
+  updatedAt: string,
+): Promise<void> {
+  await db.transaction("rw", db.settings, async () => {
+    await db.settings.put({ key: KEY_WEEKDAY_TEMPLATES, value: sanitize(templates) });
+    await db.settings.put({
+      key: KEY_PLANNING,
+      value: normalizePlanningSettings(planning),
+    });
+    await db.settings.put({ key: KEY_UPDATED_AT, value: updatedAt });
+  });
 }
 
 /**
@@ -117,5 +166,6 @@ export async function loadPlanningSettings(): Promise<PlanningSettings> {
 export async function savePlanningSettings(value: PlanningSettings): Promise<PlanningSettings> {
   const normalized = normalizePlanningSettings(value);
   await db.settings.put({ key: KEY_PLANNING, value: normalized });
+  await touchSettings();
   return normalized;
 }

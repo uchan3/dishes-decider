@@ -26,6 +26,8 @@ export const SYNC_TABLES = {
   pantryItems: "pantry_items",
   /** 週ドキュメント（献立＋買い物リスト）。Dexie の 1 行ではなく組み立てて送る。 */
   planDocs: "meal_plans",
+  /** 設定ドキュメント（曜日テンプレ＋生成設定）。1 ユーザー 1 行。 */
+  settingsDoc: "user_settings",
 } as const;
 
 /** 同期対象テーブルの Dexie 側の名前。 */
@@ -35,10 +37,10 @@ export type SyncTable = keyof typeof SYNC_TABLES;
 export type OutboxOp = OutboxRow["op"];
 
 /**
- * Dexie の 1 行に対応しないテーブル（週ドキュメント）。ID が UUID でなくても積む
- * ＝ `plan-2026-08-17` のような決定的なキーをそのまま使う。
+ * Dexie の 1 行に対応しないテーブル（週ドキュメント・設定）。ID が UUID でなくても積む
+ * ＝ `plan-2026-08-17` や `settings` のような決定的なキーをそのまま使う。
  */
-const DOC_TABLES: ReadonlySet<SyncTable> = new Set<SyncTable>(["planDocs"]);
+const DOC_TABLES: ReadonlySet<SyncTable> = new Set<SyncTable>(["planDocs", "settingsDoc"]);
 
 /**
  * 送信対象を読み出す関数。既定は Dexie の同名テーブルから 1 行取るだけ。
