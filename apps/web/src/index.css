@@ -225,6 +225,8 @@ a {
   display: flex;
   gap: 10px;
   align-items: center;
+  /* 補助操作（.slot__more）を次の行に落とすため。通常時は 1 行に収まる。 */
+  flex-wrap: wrap;
 }
 
 .slot--locked {
@@ -925,6 +927,90 @@ a {
 .switch input {
   width: 18px;
   height: 18px;
+}
+
+/* --- 献立の手動編集（スロットの補助操作・レシピ選択） --- */
+.btn--small {
+  padding: 6px 10px;
+  font-size: 0.78rem;
+}
+
+/* スロット行の下に出る補助操作。常時は畳んでおき、⋯ で開く。 */
+.slot__more {
+  flex-basis: 100%;
+  display: flex;
+  gap: 8px;
+  padding: 6px 0 2px;
+}
+
+.picker {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 12px;
+  margin: 12px 0;
+}
+
+.picker__head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.picker__search {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.picker__filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin: 8px 0 4px;
+}
+
+.picker__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+
+.picker__item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  padding: 10px 2px;
+  font: inherit;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.picker__item:hover {
+  background: var(--bg);
+}
+
+.picker__title {
+  font-weight: 600;
+}
+
+.picker__meta {
+  font-size: 0.78rem;
+  color: var(--muted);
 }
 
 /* --- 取り込み（トークン・ジョブ） --- */
