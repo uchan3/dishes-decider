@@ -119,7 +119,9 @@ pnpm --filter @recipe-planner/web typecheck
 - 常備品(US-10): 設定画面の食材マスタ一覧でトグル（`setPantryStaple`）。買い物リストは常備品も保存しつつ既定で非表示にする
 - **Supabase 連携（レシピライブラリのみ）**: `lib/supabase.ts`(クライアント・`VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY`) / `lib/auth.tsx`(メール＋パスワード認証コンテキスト) / `AppGate.tsx`(未認証はログイン画面、認証時に同期起動) / `lib/sync.ts`(`pullLibrary`: recipes/recipe_ingredients/sources/ingredients/pantry_items を Supabase→Dexie に一方向プル。**サーバーで消えた行はこちらでも消す**(`idsToDelete`。相手の端末での削除・食材統合が伝わらず、消したレシピが献立に出続けていた)。守るのは 2 種類だけ＝**UUID でない id**（`src-manual` 等のローカル専用行）と**送信キューに残っている id**（オフラインで作った行）。逆向きに、**未送信の削除に当たる行は upsert しない**（消したものが復活しないように）。判定はローカル id とキューを**取得前**に採り、取得後のキューと和を取る（取得中に増えた行・流れた行を巻き込まないため）。全件揃っていることが削除判定の前提なので **PostgREST の 1000 行上限を跨いでページングする**（途中で切れた応答を「サーバーに無い」と読むと消してしまう）、`subscribeImports`: import_jobs の Realtime で取り込み完了時に再プル)。**UI は常に Dexie から読む**（Supabase は同期元）。env 未設定ならログインを出さずローカル Dexie のみで動作
 - **書き戻し（Dexie → Supabase）は送信キュー経由**（`lib/outbox.ts` / `lib/outboxSync.ts`、architecture §5.1）。レシピ編集/削除・ソースの有効無効・常備品フラグ・手動レシピ登録・食材の再照合はすべて **Dexie に書く → `outbox` に積む → オンライン時に流す**。オフラインでも操作は成功する
-  - 送るのは差分でなく**現在の行**（state-based）。同じ行の連続編集は `coalesceOutbox` で 1 件に畳む。1 件失敗したらそこで止め、指数バックオフで再試行（起点は 起動時 / `online` イベント / バックオフ）
+  - 送るのは差分でなく**現在の行**（state-based）。同じ行の連続編集は `coalesceOutbox` で 1 件に畳む。通信断や 5xx のような**待てば直る失敗はそこで止めて**指数バックオフで再試行（起点は 起動時 / `online` イベント / バックオフ）
+  - **待っても直らない失敗（`isPermanentSyncCode`: 列が無い 42703・制約違反 23503 等）はその 1 件だけ脇に置いて後続を流す**（`failed_at` を立てる）。これが無いと、例えば migration 未適用の 1 件が買い物リストのチェックまで永久に止める。判定は**知っているコードだけ**を恒久扱いにする（知らないコードは通信の綾かもしれないので再試行に倒す）。脇に置いた分は設定画面に理由付きで出し、「もう一度送る」「破棄する」から操作できる。同じ行を編集し直しても失敗記録は消える
+  - 送信エラーは必ず `toSyncError` を通す（Supabase の `code` を落とすと恒久判定ができなくなる）
   - `lib/ids.ts` の `isUuid` と `isSupabaseConfigured` で「Supabase に存在しえない行」「ローカル専用モード」は積まない。`recipes` の `source_id` が UUID でない場合は送信時に null に落とす（`src-manual` はサーバに無いため）
   - 手動レシピのソースは `ensureManualSource` が Supabase の `(manual, manual)` 行を正とし、その UUID を Dexie の ID にも使う。オフライン時はローカル専用ソースにフォールバックする
   - 設定画面に未送信件数と「今すぐ送信」を表示する

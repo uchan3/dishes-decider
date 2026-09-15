@@ -7,9 +7,15 @@ import { db, type OutboxRow, type RecipeRow } from "../db/schema.ts";
 import {
   backoffDelayMs,
   coalesceOutbox,
+  discardFailed,
   enqueue,
+  failedEntries,
   flushOutbox,
+  isPermanentSyncCode,
   pendingCount,
+  PermanentSyncError,
+  retryFailed,
+  toSyncError,
   type OutboxSender,
   type SyncTable,
 } from "./outbox.ts";
@@ -142,7 +148,8 @@ describe("enqueue / flushOutbox", () => {
     await enqueue("recipes", ID_A, "put");
     await enqueue("recipes", ID_A, "put");
     await enqueue("recipes", ID_A, "put");
-    expect(await pendingCount()).toBe(3);
+    // 件数は畳んだあとの「実際に送られる数」で数える（UI に出すのもこの数）。
+    expect(await pendingCount()).toBe(1);
 
     const { sender, puts } = fakeSender();
     await flushOutbox(sender, () => true);
@@ -206,6 +213,133 @@ describe("enqueue / flushOutbox", () => {
       sent: 0,
       remaining: 0,
       stoppedBy: null,
+      failed: 0,
     });
+  });
+});
+
+describe("permanent failures", () => {
+  beforeEach(async () => {
+    await Promise.all([db.outbox.clear(), db.recipes.clear()]);
+  });
+
+  /** 指定した id にだけ恒久エラーを返す sender。 */
+  function pickySender(permanentOn: string) {
+    const puts: string[] = [];
+    const sender: OutboxSender = {
+      async put(_table, row) {
+        const id = row.id as string;
+        if (id === permanentOn) {
+          throw new PermanentSyncError("recipes の送信に失敗: column does not exist", "42703");
+        }
+        puts.push(id);
+      },
+      async remove() {},
+    };
+    return { sender, puts };
+  }
+
+  it("classifies error codes we know cannot be fixed by retrying", () => {
+    expect(isPermanentSyncCode("42703")).toBe(true); // 列が無い
+    expect(isPermanentSyncCode("23503")).toBe(true); // 参照先が無い
+    expect(isPermanentSyncCode("PGRST204")).toBe(true);
+    expect(isPermanentSyncCode("08006")).toBe(false); // 接続エラー
+    expect(isPermanentSyncCode(undefined)).toBe(false);
+    expect(isPermanentSyncCode("")).toBe(false);
+  });
+
+  it("wraps a permanent supabase error, and leaves an unknown one retryable", () => {
+    expect(toSyncError("x", { message: "m", code: "42703" })).toBeInstanceOf(PermanentSyncError);
+    expect(toSyncError("x", { message: "m", code: "08006" })).not.toBeInstanceOf(
+      PermanentSyncError,
+    );
+    expect(toSyncError("x", { message: "m" }).message).toBe("x: m");
+  });
+
+  it("sets aside the stuck change and keeps sending the rest", async () => {
+    await db.recipes.bulkAdd([recipe(ID_A, "肉じゃが"), recipe(ID_B, "唐揚げ")]);
+    await enqueue("recipes", ID_A, "put");
+    await enqueue("recipes", ID_B, "put");
+
+    const { sender, puts } = pickySender(ID_A);
+    const result = await flushOutbox(sender, () => true);
+
+    // 詰まった 1 件のせいで後続が止まらない（これが無いと買い物リストのチェックまで
+    // 永久に送られなくなる）。
+    expect(puts).toEqual([ID_B]);
+    expect(result).toMatchObject({ sent: 1, failed: 1, stoppedBy: null });
+    expect(await pendingCount()).toBe(0);
+    expect(await failedEntries()).toHaveLength(1);
+  });
+
+  it("does not try a set-aside change again on the next flush", async () => {
+    await db.recipes.add(recipe(ID_A, "肉じゃが"));
+    await enqueue("recipes", ID_A, "put");
+    await flushOutbox(pickySender(ID_A).sender, () => true);
+
+    const { sender, puts } = pickySender("nothing");
+    const result = await flushOutbox(sender, () => true);
+
+    expect(puts).toEqual([]);
+    expect(result).toMatchObject({ sent: 0, failed: 0 });
+  });
+
+  it("keeps the reason so the settings screen can show what is stuck", async () => {
+    await db.recipes.add(recipe(ID_A, "肉じゃが"));
+    await enqueue("recipes", ID_A, "put");
+    await flushOutbox(pickySender(ID_A).sender, () => true);
+
+    const [stuck] = await failedEntries();
+    expect(stuck?.error).toContain("column does not exist");
+    expect(stuck?.table_name).toBe("recipes");
+  });
+
+  it("retries a set-aside change once the server side is fixed", async () => {
+    await db.recipes.add(recipe(ID_A, "肉じゃが"));
+    await enqueue("recipes", ID_A, "put");
+    await flushOutbox(pickySender(ID_A).sender, () => true);
+
+    expect(await retryFailed()).toBe(1);
+    const { sender, puts } = pickySender("nothing");
+    await flushOutbox(sender, () => true);
+
+    expect(puts).toEqual([ID_A]);
+    expect(await failedEntries()).toHaveLength(0);
+  });
+
+  it("forgets the failure when the row is edited again", async () => {
+    await db.recipes.add(recipe(ID_A, "肉じゃが"));
+    await enqueue("recipes", ID_A, "put");
+    await flushOutbox(pickySender(ID_A).sender, () => true);
+    expect(await failedEntries()).toHaveLength(1);
+
+    await enqueue("recipes", ID_A, "put");
+
+    expect(await failedEntries()).toHaveLength(0);
+    expect(await pendingCount()).toBe(1);
+  });
+
+  it("can discard what we have decided not to send", async () => {
+    await db.recipes.add(recipe(ID_A, "肉じゃが"));
+    await enqueue("recipes", ID_A, "put");
+    await flushOutbox(pickySender(ID_A).sender, () => true);
+
+    expect(await discardFailed()).toBe(1);
+    expect(await failedEntries()).toHaveLength(0);
+    expect(await db.outbox.count()).toBe(0);
+  });
+
+  it("still stops at a failure that might heal (通信断は順序を保って待つ)", async () => {
+    await db.recipes.bulkAdd([recipe(ID_A, "肉じゃが"), recipe(ID_B, "唐揚げ")]);
+    await enqueue("recipes", ID_A, "put");
+    await enqueue("recipes", ID_B, "put");
+
+    const { sender, puts } = fakeSender(ID_A);
+    const result = await flushOutbox(sender, () => true);
+
+    expect(puts).toEqual([]);
+    expect(result.failed).toBe(0);
+    expect(result.stoppedBy).toBe("network down");
+    expect(await pendingCount()).toBe(2);
   });
 });

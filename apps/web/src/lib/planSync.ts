@@ -14,6 +14,7 @@
 
 import { supabase, isSupabaseConfigured } from "./supabase.ts";
 import { db, type MealPlanRow, type ShoppingItemRow } from "../db/schema.ts";
+import { toSyncError } from "./outbox.ts";
 
 /** 同期する 1 週間ぶんのドキュメント。 */
 export interface PlanDocument {
@@ -140,13 +141,13 @@ export async function pushPlanDocument(userId: string, doc: PlanDocument): Promi
     )
     .select("id")
     .single();
-  if (error) throw new Error(`献立の送信に失敗: ${error.message}`);
+  if (error) throw toSyncError("献立の送信に失敗", error);
 
   const { error: listErr } = await supabase.from("shopping_lists").upsert(
     { meal_plan_id: data.id as string, doc: { items: doc.items } },
     { onConflict: "meal_plan_id" },
   );
-  if (listErr) throw new Error(`買い物リストの送信に失敗: ${listErr.message}`);
+  if (listErr) throw toSyncError("買い物リストの送信に失敗", listErr);
 }
 
 /** Supabase 行（doc 付き）を {@link PlanDocument} に戻す。壊れていれば null。 */
