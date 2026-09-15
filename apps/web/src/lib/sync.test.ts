@@ -4,32 +4,37 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 /** Supabase の代わりに返す行。テストごとに差し替える。 */
 const server = vi.hoisted(() => ({ rows: {} as Record<string, Record<string, unknown>[]> }));
 
-// `from(t).select(c).order(...).range(from, to)` だけを満たす最小のスタブ。
-// range をちゃんとスライスするので、ページングの検証にも使える。
-vi.mock("./supabase.ts", () => ({
-  isSupabaseConfigured: true,
-  supabase: {
-    from(table: string) {
-      return {
-        select() {
-          return {
-            order() {
-              return {
-                range(from: number, to: number) {
-                  const all = server.rows[table] ?? [];
-                  return Promise.resolve({ data: all.slice(from, to + 1), error: null });
-                },
-              };
-            },
-          };
-        },
-      };
-    },
-  },
-}));
+// PostgREST の代わり。`select().order().range()`（全件ページング）と
+// `select().eq()` / `.eq().maybeSingle()`（1 レシピ取得）を満たす最小のスタブ。
+// range はちゃんとスライスするのでページングの検証にも使える。
+vi.mock("./supabase.ts", () => {
+  const query = (table: string) => {
+    let rows = () => (server.rows[table] ?? []) as Record<string, unknown>[];
+    const api = {
+      select: () => api,
+      order: () => api,
+      range: (from: number, to: number) =>
+        Promise.resolve({ data: rows().slice(from, to + 1), error: null }),
+      eq(column: string, value: unknown) {
+        const previous = rows;
+        rows = () => previous().filter((row) => row[column] === value);
+        return api;
+      },
+      maybeSingle: () => Promise.resolve({ data: rows()[0] ?? null, error: null }),
+      // `await from(t).select().eq(...)` のように終端メソッド無しでも待てるようにする。
+      then: (resolve: (value: { data: unknown; error: null }) => unknown) =>
+        resolve({ data: rows(), error: null }),
+    };
+    return api;
+  };
+  return {
+    isSupabaseConfigured: true,
+    supabase: { from: (table: string) => query(table) },
+  };
+});
 
 import { db, type RecipeRow } from "../db/schema.ts";
-import { idsToDelete, pullLibrary } from "./sync.ts";
+import { idsToDelete, pullLibrary, pullRecipe } from "./sync.ts";
 
 const RECIPE_A = "aaaaaaaa-0000-4000-8000-000000000001";
 const RECIPE_B = "bbbbbbbb-0000-4000-8000-000000000002";
@@ -297,5 +302,99 @@ describe("pullLibrary", () => {
     await pullLibrary();
 
     expect((await db.sources.get(SOURCE))?.is_enabled).toBe(false);
+  });
+});
+
+describe("pullRecipe", () => {
+  beforeEach(async () => {
+    await Promise.all([
+      db.sources.clear(),
+      db.ingredients.clear(),
+      db.recipes.clear(),
+      db.recipeIngredients.clear(),
+      db.outbox.clear(),
+    ]);
+    setServer({});
+  });
+
+  it("brings in just the recipe an import produced, with its lines", async () => {
+    setServer({
+      recipes: [recipe(RECIPE_A, "肉じゃが"), recipe(RECIPE_B, "生姜焼き")],
+      recipe_ingredients: [line(LINE_A, RECIPE_A, "じゃがいも"), line(LINE_B, RECIPE_B, "豚肉")],
+    });
+
+    expect(await pullRecipe(RECIPE_A)).toBe(true);
+
+    expect((await db.recipes.get(RECIPE_A))?.title).toBe("肉じゃが");
+    expect(await db.recipeIngredients.get(LINE_A)).toBeDefined();
+    // 取り込んだレシピだけを入れる（全件プルではない）。
+    expect(await db.recipes.get(RECIPE_B)).toBeUndefined();
+    expect(await db.recipeIngredients.get(LINE_B)).toBeUndefined();
+  });
+
+  it("replaces the lines of that recipe instead of piling them up", async () => {
+    await db.recipeIngredients.put(line(LINE_A, RECIPE_A, "じゃがいも"));
+    setServer({
+      recipes: [recipe(RECIPE_A, "肉じゃが")],
+      recipe_ingredients: [line(LINE_B, RECIPE_A, "にんじん")],
+    });
+
+    await pullRecipe(RECIPE_A);
+
+    expect(await db.recipeIngredients.get(LINE_A)).toBeUndefined();
+    expect(await db.recipeIngredients.get(LINE_B)).toBeDefined();
+  });
+
+  it("leaves other recipes' lines alone", async () => {
+    await db.recipeIngredients.put(line(LINE_B, RECIPE_B, "豚肉"));
+    setServer({
+      recipes: [recipe(RECIPE_A, "肉じゃが")],
+      recipe_ingredients: [line(LINE_A, RECIPE_A, "じゃがいも")],
+    });
+
+    await pullRecipe(RECIPE_A);
+
+    expect(await db.recipeIngredients.get(LINE_B)).toBeDefined();
+  });
+
+  it("picks up masters the import created", async () => {
+    setServer({
+      recipes: [recipe(RECIPE_A, "肉じゃが")],
+      ingredients: [
+        {
+          id: ONION,
+          canonical_name: "玉ねぎ",
+          kana: null,
+          aliases: [],
+          category: "vegetable",
+          default_unit: null,
+          is_pantry_staple: false,
+          sort_order: 0,
+        },
+      ],
+    });
+
+    await pullRecipe(RECIPE_A);
+
+    expect(await db.ingredients.get(ONION)).toBeDefined();
+  });
+
+  it("reports a recipe the server does not have", async () => {
+    setServer({});
+
+    expect(await pullRecipe(RECIPE_A)).toBe(false);
+  });
+
+  it("does not resurrect a recipe we just deleted", async () => {
+    await db.outbox.add({
+      table_name: "recipes",
+      record_id: RECIPE_A,
+      op: "delete",
+      created_at: new Date().toISOString(),
+    });
+    setServer({ recipes: [recipe(RECIPE_A, "肉じゃが")] });
+
+    expect(await pullRecipe(RECIPE_A)).toBe(false);
+    expect(await db.recipes.get(RECIPE_A)).toBeUndefined();
   });
 });

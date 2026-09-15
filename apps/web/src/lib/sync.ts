@@ -284,10 +284,57 @@ export async function pullLibrary(): Promise<number> {
 }
 
 /**
- * 取り込みジョブの Realtime 購読を開始する。ジョブが success/partial になったら
- * ライブラリを再プルして新レシピを Dexie に反映する。
+ * 取り込みで増えた 1 レシピだけを取得して Dexie に反映する。
  *
- * @param onChange - 反映後に呼ばれる（件数を通知）。UI 更新のトリガに使える
+ * ライブラリ全体のプルは、レシピが増えるほど重くなる（材料行は 100 レシピで数千行）。
+ * **取り込みのたびに全件取り直す必要はない**: そのジョブが作ったレシピと材料行、それに
+ * 小さいマスタ（収集元・食材）だけ取れば足りる。
+ *
+ * ここでは削除の突き合わせをしない（何も消えていないため）。サーバーで消えた行の反映は
+ * {@link pullLibrary} の担当で、ログイン時と手動同期のときに走る。
+ *
+ * @param recipeId - 取り込みジョブが作ったレシピ ID
+ * @returns 反映できたら true（サーバーに無い・手元で削除待ちなら false）
+ */
+export async function pullRecipe(recipeId: string): Promise<boolean> {
+  if (!isSupabaseConfigured) return false;
+
+  // 手元で削除したばかりのレシピを取り込みの通知で復活させない。
+  const pendingDelete = await db.outbox
+    .where("record_id")
+    .equals(recipeId)
+    .filter((row) => row.table_name === "recipes" && row.op === "delete")
+    .count();
+  if (pendingDelete > 0) return false;
+
+  const [recipe, lines, sources, ingredients] = await Promise.all([
+    supabase.from(TABLES.recipes).select("*").eq("id", recipeId).maybeSingle(),
+    supabase.from(TABLES.recipeIngredients).select("*").eq("recipe_id", recipeId),
+    // 取り込みは収集元と食材マスタも作る。どちらも小さいので丸ごと取り直す。
+    fetchAll(TABLES.sources),
+    fetchAll(TABLES.ingredients),
+  ]);
+
+  const firstError = recipe.error || lines.error;
+  if (firstError) throw new Error(`同期に失敗しました: ${firstError.message}`);
+  if (!recipe.data) return false;
+
+  await db.transaction("rw", db.sources, db.ingredients, db.recipes, db.recipeIngredients, async () => {
+    await db.sources.bulkPut(sources as unknown as SourceRow[]);
+    await db.ingredients.bulkPut(ingredients as unknown as IngredientRow[]);
+    await db.recipes.put(toRecipeRow(recipe.data as Record<string, unknown>));
+    // 材料行はこのレシピぶんを丸ごと入れ替える（サーバーが正）。
+    await db.recipeIngredients.where("recipe_id").equals(recipeId).delete();
+    await db.recipeIngredients.bulkPut((lines.data ?? []) as unknown as RecipeIngredientRow[]);
+  });
+  return true;
+}
+
+/**
+ * 取り込みジョブの Realtime 購読を開始する。ジョブが success/partial になったら
+ * **そのレシピだけ**取得して Dexie に反映する（`recipe_id` が無ければ全件プルに落ちる）。
+ *
+ * @param onChange - 反映後に呼ばれる（反映したレシピ数）。UI 更新のトリガに使える
  * @returns 購読解除関数
  */
 export function subscribeImports(onChange?: (count: number) => void): () => void {
@@ -299,11 +346,14 @@ export function subscribeImports(onChange?: (count: number) => void): () => void
       "postgres_changes",
       { event: "*", schema: "public", table: "import_jobs" },
       async (payload) => {
-        const status = (payload.new as { status?: string } | null)?.status;
-        if (status === "success" || status === "partial") {
-          const count = await pullLibrary();
-          onChange?.(count);
+        const job = payload.new as { status?: string; recipe_id?: string | null } | null;
+        if (job?.status !== "success" && job?.status !== "partial") return;
+        if (job.recipe_id) {
+          onChange?.((await pullRecipe(job.recipe_id)) ? 1 : 0);
+          return;
         }
+        // 古いジョブ行など recipe_id が取れない場合の保険。
+        onChange?.(await pullLibrary());
       },
     )
     .subscribe();
