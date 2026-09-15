@@ -156,14 +156,23 @@ export async function generateWeek(startDate: string): Promise<GeneratedWeek> {
     }
   }
 
+  // 手動で「外食・作らない」にした日も引き継ぐ（F-02-4）。作り直すたびに外食の予定が
+  // 消えると、毎回付け直すことになる。
+  const skippedDates = new Set(
+    (existing?.meals ?? []).filter((m) => m.is_skipped).map((m) => m.date),
+  );
+
   const result = generateMealPlan({
-    slots: days.flatMap((d) =>
-      d.slots.map((s) =>
-        carried.has(s.slotId)
-          ? { ...s, lockedRecipeId: carried.get(s.slotId)?.recipe_id ?? null }
-          : s,
+    // 外食の日は抽選しない。埋めても使われないうえ、週内の重複回避の候補を無駄に使う。
+    slots: days
+      .filter((d) => !skippedDates.has(d.date))
+      .flatMap((d) =>
+        d.slots.map((s) =>
+          carried.has(s.slotId)
+            ? { ...s, lockedRecipeId: carried.get(s.slotId)?.recipe_id ?? null }
+            : s,
+        ),
       ),
-    ),
     recipes,
     referenceDate: today(),
     settings: generationSettings(settings),
@@ -179,7 +188,7 @@ export async function generateWeek(startDate: string): Promise<GeneratedWeek> {
     date: day.date,
     meal_type: "dinner",
     template_id: day.templateId,
-    is_skipped: day.templateId === "eat_out",
+    is_skipped: day.templateId === "eat_out" || skippedDates.has(day.date),
     slots: day.slots.map((slot, idx) => {
       const prev = carried.get(slot.slotId);
       return {
@@ -325,18 +334,84 @@ export function reshuffleMeal(plan: MealPlanRow, mealId: string): Promise<Reshuf
   return reshuffleSlots(plan, slotIds, false);
 }
 
-/** スロットのロック状態をトグルして保存する（US-06）。 */
-export async function toggleSlotLock(plan: MealPlanRow, slotId: string): Promise<MealPlanRow> {
-  const next = structuredClone(plan) as MealPlanRow;
-  for (const meal of next.meals) {
-    for (const slot of meal.slots) {
-      if (slot.id === slotId) slot.is_locked = !slot.is_locked;
-    }
-  }
+/** 変更した献立を保存して端末間同期に載せる（手動編集の共通後処理）。 */
+async function savePlan(next: MealPlanRow): Promise<MealPlanRow> {
   next.updated_at = new Date().toISOString();
   await db.mealPlans.put(next);
   await queuePlanDoc(next.id);
   return next;
+}
+
+/** 1 スロットだけを書き換えたコピーを作る。 */
+function withSlot(
+  plan: MealPlanRow,
+  slotId: string,
+  change: (slot: PlanSlotRow) => void,
+): MealPlanRow {
+  const next = structuredClone(plan) as MealPlanRow;
+  for (const meal of next.meals) {
+    for (const slot of meal.slots) {
+      if (slot.id === slotId) change(slot);
+    }
+  }
+  return next;
+}
+
+/** スロットのロック状態をトグルして保存する（US-06）。 */
+export async function toggleSlotLock(plan: MealPlanRow, slotId: string): Promise<MealPlanRow> {
+  return savePlan(withSlot(plan, slotId, (slot) => (slot.is_locked = !slot.is_locked)));
+}
+
+/**
+ * スロットを空にする（F-02-4）。
+ *
+ * 「この枠は作らない」を表す。空けた枠にロックは残さない（次の再抽選で埋められる）。
+ * 買い物リストからも自動的に外れる（集約はレシピのあるスロットしか見ない）。
+ */
+export async function clearSlot(plan: MealPlanRow, slotId: string): Promise<MealPlanRow> {
+  return savePlan(
+    withSlot(plan, slotId, (slot) => {
+      slot.recipe_id = null;
+      slot.is_locked = false;
+    }),
+  );
+}
+
+/**
+ * スロットにライブラリのレシピを直接指定する（F-02-4）。
+ *
+ * **指定したスロットはロックする**。自分で選んだ枠が次の「作り直す」や食事単位の
+ * 再抽選で入れ替わるのは、指定した意図と食い違うため。外したいときはロックを外す。
+ */
+export async function setSlotRecipe(
+  plan: MealPlanRow,
+  slotId: string,
+  recipeId: string,
+): Promise<MealPlanRow> {
+  return savePlan(
+    withSlot(plan, slotId, (slot) => {
+      slot.recipe_id = recipeId;
+      slot.is_locked = true;
+    }),
+  );
+}
+
+/**
+ * その日を「外食・作らない」にする / 戻す（F-02-4）。
+ *
+ * **スロットの中身は消さない**。戻したときに元の献立がそのまま返ってくるほうが、
+ * 押し間違いに強い。買い物リストは `is_skipped` の食事を丸ごと除外する。
+ */
+export async function setMealSkipped(
+  plan: MealPlanRow,
+  mealId: string,
+  skipped: boolean,
+): Promise<MealPlanRow> {
+  const next = structuredClone(plan) as MealPlanRow;
+  for (const meal of next.meals) {
+    if (meal.id === mealId) meal.is_skipped = skipped;
+  }
+  return savePlan(next);
 }
 
 /**
@@ -351,9 +426,12 @@ export async function buildShoppingItems(
   householdSize: number,
   includePantryStaples = false,
 ): Promise<ShoppingItem[]> {
+  // 外食・作らない日は買い物リストに乗せない（F-02-4）。中身は残っているので、
+  // 戻せばそのまま復活する。
+  const activeMeals = plan.meals.filter((m) => !m.is_skipped);
   const recipeIds = [
     ...new Set(
-      plan.meals.flatMap((m) => m.slots.map((s) => s.recipe_id).filter((x): x is string => x !== null)),
+      activeMeals.flatMap((m) => m.slots.map((s) => s.recipe_id).filter((x): x is string => x !== null)),
     ),
   ];
 
@@ -383,7 +461,7 @@ export async function buildShoppingItems(
 
   const ingredients = new Map(ingredientRows.map((row) => [row.id, toIngredient(row)] as const));
 
-  const slots = plan.meals.flatMap((m) => m.slots.map((s) => ({ recipeId: s.recipe_id })));
+  const slots = activeMeals.flatMap((m) => m.slots.map((s) => ({ recipeId: s.recipe_id })));
 
   return aggregateShoppingList({ slots, recipes, ingredients, householdSize, includePantryStaples });
 }

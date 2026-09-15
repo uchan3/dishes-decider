@@ -1,12 +1,17 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
+import type { DishRole } from "@recipe-planner/core";
 import { db } from "../db/schema.ts";
+import { RecipePicker } from "../components/RecipePicker.tsx";
 import { startOfWeek, today, weekdayLabel } from "../lib/date.ts";
 import {
+  clearSlot,
   generateWeek,
   reshuffleMeal,
   reshuffleSlot,
+  setMealSkipped,
+  setSlotRecipe,
   toggleSlotLock,
 } from "../lib/planning.ts";
 import { isSlotCooked, setSlotCooked } from "../lib/cooking.ts";
@@ -53,6 +58,10 @@ export function HomePage() {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [busy, setBusy] = useState(false);
   const [cookedPrompt, setCookedPrompt] = useState<CookedPrompt | null>(null);
+  /** 補助操作（選ぶ・空にする）を開いているスロット。1 つずつしか開かない。 */
+  const [openSlotId, setOpenSlotId] = useState<string | null>(null);
+  /** レシピ選択を開いているスロット。 */
+  const [pickingSlot, setPickingSlot] = useState<{ id: string; role: DishRole } | null>(null);
 
   /** 非同期アクションを busy 管理で包む。plan 更新は useLiveQuery が拾う。 */
   async function run(action: () => Promise<Notice | void>) {
@@ -100,6 +109,34 @@ export function HomePage() {
    * 「作った」を記録／取り消しする。レシピの調理回数・最終調理日に反映される。
    * 記録したときは、冷蔵庫から出す候補を提示する（自動では消さない）。
    */
+  /** スロットを空にする（F-02-4）。 */
+  function handleClear(slotId: string) {
+    if (!plan) return;
+    setOpenSlotId(null);
+    void run(async () => {
+      await clearSlot(plan, slotId);
+    });
+  }
+
+  /** ライブラリから選んだレシピをスロットに入れる（F-02-4）。 */
+  function handlePick(recipeId: string) {
+    const target = pickingSlot;
+    if (!plan || !target) return;
+    setPickingSlot(null);
+    setOpenSlotId(null);
+    void run(async () => {
+      await setSlotRecipe(plan, target.id, recipeId);
+    });
+  }
+
+  /** その日を外食・作らないにする / 戻す（F-02-4）。 */
+  function handleSkip(mealId: string, skipped: boolean) {
+    if (!plan) return;
+    void run(async () => {
+      await setMealSkipped(plan, mealId, skipped);
+    });
+  }
+
   function handleCooked(slotId: string, cooked: boolean) {
     if (!plan) return;
     void run(async () => {
@@ -228,9 +265,23 @@ export function HomePage() {
                       ↻
                     </button>
                   )}
+                  {meal.slots.length > 0 && (
+                    <button
+                      className={meal.is_skipped ? "icon-btn icon-btn--on" : "icon-btn"}
+                      title={meal.is_skipped ? "作る日に戻す" : "外食・作らない日にする"}
+                      disabled={busy}
+                      onClick={() => handleSkip(meal.id, !meal.is_skipped)}
+                    >
+                      🍽
+                    </button>
+                  )}
                 </div>
                 {meal.is_skipped ? (
-                  <p className="slot-list slot--skipped muted">外食・作らない</p>
+                  <p className="slot-list slot--skipped muted">
+                    外食・作らない
+                    {meal.slots.some((s) => s.recipe_id !== null) &&
+                      "（戻すと元の献立に戻ります）"}
+                  </p>
                 ) : (
                 <ul className="slot-list">
                   {meal.slots.map((slot) => {
@@ -275,7 +326,37 @@ export function HomePage() {
                         >
                           ↻
                         </button>
+                        <button
+                          className={openSlotId === slot.id ? "icon-btn icon-btn--on" : "icon-btn"}
+                          title="その他の操作"
+                          disabled={busy || cooked}
+                          onClick={() =>
+                            setOpenSlotId((prev) => (prev === slot.id ? null : slot.id))
+                          }
+                        >
+                          ⋯
+                        </button>
                       </span>
+                      {openSlotId === slot.id && (
+                        <span className="slot__more">
+                          <button
+                            className="btn btn--small"
+                            disabled={busy}
+                            onClick={() =>
+                              setPickingSlot({ id: slot.id, role: slot.dish_role })
+                            }
+                          >
+                            レシピを選ぶ
+                          </button>
+                          <button
+                            className="btn btn--small"
+                            disabled={busy || slot.recipe_id === null}
+                            onClick={() => handleClear(slot.id)}
+                          >
+                            空にする
+                          </button>
+                        </span>
+                      )}
                     </li>
                     );
                   })}
@@ -284,6 +365,13 @@ export function HomePage() {
               </article>
             ))}
           </div>
+          {pickingSlot && (
+            <RecipePicker
+              role={pickingSlot.role}
+              onPick={handlePick}
+              onClose={() => setPickingSlot(null)}
+            />
+          )}
           <Link to="/shopping" className="btn btn--block">
             買い物リストへ →
           </Link>
