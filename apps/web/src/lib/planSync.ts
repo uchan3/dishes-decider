@@ -51,7 +51,8 @@ function isNewer(a: string | null | undefined, b: string | null | undefined): bo
  * 買い物リストの項目をマージする（純粋関数）。
  *
  * - **どの項目が存在するか**は新しい方のドキュメントに従う（削除や献立の作り直しを反映するため）
- * - **チェック状態**は項目ごとに新しい方を採用する（二人が別々の項目にチェックしても消えない）
+ * - **チェック状態と手直しした数量**は項目ごとに新しい方を採用する（二人が別々の項目を
+ *   触っても消えない）
  *
  * @param local - 手元の項目
  * @param remote - 受信した項目
@@ -75,7 +76,15 @@ export function mergeShoppingItems(
     const itemTime = item.updated_at ?? (remoteWins ? remoteUpdatedAt : localUpdatedAt);
     const otherTime = counterpart.updated_at ?? (remoteWins ? localUpdatedAt : remoteUpdatedAt);
     if (!isNewer(otherTime, itemTime)) return item;
-    return { ...item, is_checked: counterpart.is_checked, updated_at: otherTime };
+    return {
+      ...item,
+      is_checked: counterpart.is_checked,
+      // 未設定を明示的に入れられない（exactOptionalPropertyTypes）ので条件付きで載せる。
+      ...(counterpart.quantity_override === undefined
+        ? {}
+        : { quantity_override: counterpart.quantity_override }),
+      updated_at: otherTime,
+    };
   });
 }
 

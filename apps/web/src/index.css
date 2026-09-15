@@ -360,6 +360,8 @@ a {
   display: flex;
   align-items: center;
   gap: 4px;
+  /* 内訳・数量編集（.shop-item__detail）を次の行に落とすため。 */
+  flex-wrap: wrap;
 }
 
 .shop-item label {
@@ -388,6 +390,46 @@ a {
 
 .shop-item--done .shop-item__name {
   text-decoration: line-through;
+  color: var(--muted);
+}
+
+/* 手で直した数量の印。 */
+.shop-item__edited {
+  font-style: normal;
+  color: var(--primary);
+}
+
+/* 内訳（どのレシピで使うか）と数量の手直し。⋯ で開く。 */
+.shop-item__detail {
+  flex-basis: 100%;
+  padding: 4px 0 10px;
+}
+
+.shop-item__from {
+  margin: 0 0 6px;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.qty-edit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.qty-edit__input {
+  width: 5.5rem;
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.qty-edit__unit {
+  font-size: 0.85rem;
   color: var(--muted);
 }
 

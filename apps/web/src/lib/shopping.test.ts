@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { ShoppingItem } from "@recipe-planner/core";
 import type { ShoppingItemRow } from "../db/schema.ts";
-import { reconcileShoppingItems, shoppingListId } from "./shopping.ts";
+import {
+  effectiveQuantity,
+  hasQuantityOverride,
+  reconcileShoppingItems,
+  shoppingListId,
+} from "./shopping.ts";
 
 const PLAN_ID = "plan-2026-08-17";
 
@@ -143,5 +148,40 @@ describe("reconcileShoppingItems", () => {
 
     expect(rows.map((r) => r.id)).toEqual(["row-onion", "new-1"]);
     expect(rows[1]?.is_checked).toBe(false);
+  });
+});
+
+describe("hand-edited quantities", () => {
+  it("uses the edited value for shopping, and the computed one otherwise", () => {
+    expect(effectiveQuantity({ quantity: 3, quantity_override: 2 })).toBe(2);
+    expect(effectiveQuantity({ quantity: 3, quantity_override: null })).toBe(3);
+    expect(effectiveQuantity({ quantity: 3 })).toBe(3);
+    expect(effectiveQuantity({ quantity: null })).toBeNull();
+  });
+
+  it("marks only a value that actually differs from the computed one", () => {
+    expect(hasQuantityOverride({ quantity: 3, quantity_override: 2 })).toBe(true);
+    expect(hasQuantityOverride({ quantity: 3, quantity_override: 3 })).toBe(false);
+    expect(hasQuantityOverride({ quantity: 3 })).toBe(false);
+  });
+
+  it("keeps a hand-edited quantity when the week is rebuilt", () => {
+    const { rows } = reconcileShoppingItems(
+      PLAN_ID,
+      // 献立が変わって必要量が増えても、「家にある分を引いた」意図のほうを残す。
+      [aggregated({ quantity: 4 })],
+      [saved({ quantity: 2, quantity_override: 1 })],
+      idFactory(),
+    );
+
+    expect(rows[0]?.quantity).toBe(4); // 計算値は新しくなる
+    expect(rows[0]?.quantity_override).toBe(1); // 手直しは残る
+    expect(effectiveQuantity(rows[0] as ShoppingItemRow)).toBe(1);
+  });
+
+  it("leaves rows alone that were never edited", () => {
+    const { rows } = reconcileShoppingItems(PLAN_ID, [aggregated()], [saved()], idFactory());
+
+    expect(rows[0]?.quantity_override).toBeUndefined();
   });
 });

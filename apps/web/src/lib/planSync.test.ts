@@ -35,6 +35,29 @@ const plan = (updatedAt: string): MealPlanRow => ({
   updated_at: updatedAt,
 });
 
+describe("mergeShoppingItems", () => {
+  const LATEST = "2026-08-17T11:00:00.000Z";
+
+  it("takes the hand-edited quantity from whichever device touched the item last", () => {
+    // ドキュメント全体は相手の方が新しいが、この項目を最後に直したのはこちら。
+    const local = [item({ id: "a", quantity_override: 1, updated_at: LATEST })];
+    const remote = [item({ id: "a", quantity_override: 3, updated_at: EARLY })];
+
+    const merged = mergeShoppingItems(local, remote, EARLY, LATE);
+
+    expect(merged[0]?.quantity_override).toBe(1);
+  });
+
+  it("takes the other device's edit when theirs is the later one", () => {
+    const local = [item({ id: "a", quantity_override: 1, updated_at: EARLY })];
+    const remote = [item({ id: "a", quantity_override: 3, updated_at: LATEST })];
+
+    const merged = mergeShoppingItems(local, remote, LATE, EARLY);
+
+    expect(merged[0]?.quantity_override).toBe(3);
+  });
+});
+
 describe("shouldApplyPlan", () => {
   it("accepts a plan we do not have yet", () => {
     expect(shouldApplyPlan(undefined, plan(EARLY))).toBe(true);
