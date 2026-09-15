@@ -23,7 +23,7 @@ import { setSourceEnabled } from "../lib/sources.ts";
 import { relinkSources, renameSource } from "../lib/relinkSources.ts";
 import { IngestCard } from "../components/IngestCard.tsx";
 import { MergeIngredientsCard } from "../components/MergeIngredientsCard.tsx";
-import { pendingCount } from "../lib/outbox.ts";
+import { discardFailed, failedEntries, pendingCount, retryFailed } from "../lib/outbox.ts";
 import { flushNow } from "../lib/outboxSync.ts";
 
 /** 売場カテゴリの並び順とラベル（買い物リストの導線順に合わせる）。 */
@@ -91,6 +91,9 @@ export function SettingsPage() {
   /** まだ Supabase に送れていない変更の数（オフライン中に溜まる）。 */
   const unsentCount = useLiveQuery(() => pendingCount(), []);
 
+  /** 送信できずキューから外した変更（列が無い・制約違反など、待っても直らないもの）。 */
+  const stuckEntries = useLiveQuery(() => failedEntries(), []);
+
   /** 食材マスタに紐付いていない材料の数（再照合の要否を示す）。 */
   const unlinkedCount = useLiveQuery(async () => {
     const lines = await db.recipeIngredients.toArray();
@@ -150,6 +153,31 @@ export function SettingsPage() {
   function updatePlanning(patch: Partial<PlanningSettings>) {
     if (!planning) return;
     void savePlanningSettings({ ...planning, ...patch }).then(() => flushNow());
+  }
+
+  /**
+   * 脇に置いた変更を送信対象に戻す。サーバー側を直したあと（migration を当てた等）に押す。
+   */
+  async function handleRetryStuck() {
+    setBusy(true);
+    try {
+      const n = await retryFailed();
+      const r = await flushNow();
+      setMessage(`${n} 件を送り直しました（成功 ${r.sent} 件・再び失敗 ${r.failed} 件）。`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** 脇に置いた変更を捨てる（もう送らなくてよいと判断したとき）。 */
+  async function handleDiscardStuck() {
+    setBusy(true);
+    try {
+      const n = await discardFailed();
+      setMessage(`${n} 件を破棄しました。`);
+    } finally {
+      setBusy(false);
+    }
   }
 
   /** 常備品フラグを切り替える。買い物リストの既定表示から外れる（US-10）。 */
@@ -230,6 +258,30 @@ export function SettingsPage() {
               <button onClick={handleFlush} disabled={busy} className="btn">
                 今すぐ送信
               </button>
+            </div>
+          )}
+
+          {stuckEntries !== undefined && stuckEntries.length > 0 && (
+            <div className="notice notice--warn">
+              <p>
+                <strong>送れなかった変更が {stuckEntries.length} 件あります。</strong>
+                待っても直らない種類の失敗なので、他の同期を止めないよう脇に置いてあります。
+              </p>
+              <ul className="stuck-list">
+                {stuckEntries.map((row) => (
+                  <li key={row.seq}>
+                    <code className="code-inline">{row.table_name}</code> · {row.error}
+                  </li>
+                ))}
+              </ul>
+              <div className="btn-row">
+                <button onClick={handleRetryStuck} disabled={busy} className="btn">
+                  もう一度送る
+                </button>
+                <button onClick={handleDiscardStuck} disabled={busy} className="btn btn--danger">
+                  破棄する
+                </button>
+              </div>
             </div>
           )}
         </div>

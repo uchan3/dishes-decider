@@ -13,6 +13,7 @@
  */
 
 import { supabase, isSupabaseConfigured } from "./supabase.ts";
+import { toSyncError } from "./outbox.ts";
 import { type WeekdayTemplates } from "./mealTemplates.ts";
 import {
   applySettings,
@@ -71,7 +72,7 @@ export async function pushSettingsDocument(
   const { error } = await supabase
     .from("user_settings")
     .upsert({ user_id: userId, doc }, { onConflict: "user_id" });
-  if (error) throw new Error(`設定の送信に失敗: ${error.message}`);
+  if (error) throw toSyncError("設定の送信に失敗", error);
 }
 
 /** Supabase の行を {@link SettingsDocument} に戻す。壊れていれば null。 */

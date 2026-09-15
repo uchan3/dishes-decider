@@ -1050,6 +1050,18 @@ a {
   font-size: 0.78rem;
 }
 
+/* 送れなかった変更の一覧（設定 → 同期）。 */
+.stuck-list {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.78rem;
+  word-break: break-word;
+}
+
 /* --- 生成設定 --- */
 .setting-list {
   list-style: none;

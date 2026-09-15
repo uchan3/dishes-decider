@@ -12,6 +12,7 @@ import {
   backoffDelayMs,
   flushOutbox,
   SYNC_TABLES,
+  toSyncError,
   type FlushResult,
   type OutboxSender,
   type RowLoader,
@@ -68,13 +69,13 @@ export function supabaseSender(userId: string): OutboxSender {
         if (!isUuid(payload.source_id)) payload.source_id = null;
       }
       const { error } = await supabase.from(SYNC_TABLES[table]).upsert(payload);
-      if (error) throw new Error(`${SYNC_TABLES[table]} の送信に失敗: ${error.message}`);
+      if (error) throw toSyncError(`${SYNC_TABLES[table]} の送信に失敗`, error);
     },
     async remove(table, id) {
       // ドキュメント系は削除しない（消す導線が無く、変更は put で上書きされる）。
       if (table === "planDocs" || table === "settingsDoc") return;
       const { error } = await supabase.from(SYNC_TABLES[table]).delete().eq("id", id);
-      if (error) throw new Error(`${SYNC_TABLES[table]} の削除に失敗: ${error.message}`);
+      if (error) throw toSyncError(`${SYNC_TABLES[table]} の削除に失敗`, error);
     },
   };
 }
@@ -89,7 +90,7 @@ let currentUserId: string | null = null;
  */
 export async function flushNow(): Promise<FlushResult> {
   if (!isSupabaseConfigured || currentUserId === null) {
-    return { sent: 0, remaining: 0, stoppedBy: "not-signed-in" };
+    return { sent: 0, remaining: 0, stoppedBy: "not-signed-in", failed: 0 };
   }
   return flushOutbox(supabaseSender(currentUserId), () => navigator.onLine, loadRow);
 }

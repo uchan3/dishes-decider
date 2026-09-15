@@ -71,6 +71,8 @@ export interface FlushResult {
   remaining: number;
   /** 送信を中断した理由（オフライン・エラーなど）。完走したら null。 */
   stoppedBy: string | null;
+  /** 恒久エラーとしてキューから外した件数（後続は流している）。 */
+  failed: number;
 }
 
 /**
@@ -89,6 +91,67 @@ export function coalesceOutbox(entries: readonly OutboxRow[]): OutboxRow[] {
     byKey.set(key, firstSeq === undefined ? entry : { ...entry, seq: firstSeq });
   }
   return [...byKey.values()].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+}
+
+/**
+ * 「何度送っても直らない」と分かっている送信エラー。
+ *
+ * これを投げると、その 1 件だけがキューから外され、**後続は流れ続ける**。
+ * 通常の `Error`（通信断・5xx など）はこれまでどおりそこで打ち切り、順序を保ったまま
+ * バックオフで再試行する。
+ */
+export class PermanentSyncError extends Error {
+  constructor(
+    message: string,
+    readonly code?: string,
+  ) {
+    super(message);
+    this.name = "PermanentSyncError";
+  }
+}
+
+/**
+ * Postgres / PostgREST のエラーコードが「送り直しても同じ」ものかを返す（純粋関数）。
+ *
+ * **判っているものだけを恒久扱いにする**（知らないコードは通信の綾かもしれないので
+ * 再試行に倒す）。誤って恒久と判定すると、その変更は自動では二度と送られない。
+ *
+ * @example
+ * ```ts
+ * isPermanentSyncCode("42703"); // → true（列が無い＝ migration 未適用）
+ * isPermanentSyncCode("08006"); // → false（接続エラー。待てば直る）
+ * ```
+ */
+export function isPermanentSyncCode(code: string | null | undefined): boolean {
+  if (!code) return false;
+  return PERMANENT_CODES.has(code.toUpperCase());
+}
+
+/** 送り直しても結果が変わらないエラーコード。 */
+const PERMANENT_CODES: ReadonlySet<string> = new Set([
+  "42703", // undefined_column … migration 未適用
+  "42P01", // undefined_table
+  "42501", // insufficient_privilege … RLS で弾かれている
+  "PGRST204", // スキーマキャッシュに列が無い（PostgREST）
+  "PGRST301", // JWT の問題（送り直しても同じ）
+  "22P02", // invalid_text_representation … UUID でない値を uuid 列へ
+  "23502", // not_null_violation
+  "23503", // foreign_key_violation … 参照先が無い
+  "23505", // unique_violation … upsert の衝突キーが噛み合っていない
+  "23514", // check_violation
+]);
+
+/**
+ * Supabase のエラーを送信エラーに変換する。恒久的なコードなら
+ * {@link PermanentSyncError} にして、キューが詰まらないようにする。
+ *
+ * @param prefix - 表示用の前置き（例: 「recipes の送信に失敗」）
+ */
+export function toSyncError(prefix: string, error: { message: string; code?: string }): Error {
+  const message = `${prefix}: ${error.message}`;
+  return isPermanentSyncCode(error.code)
+    ? new PermanentSyncError(message, error.code)
+    : new Error(message);
 }
 
 /** 再試行の待ち時間（ミリ秒）。指数バックオフ、上限 5 分。 */
@@ -110,6 +173,9 @@ export function backoffDelayMs(attempt: number, baseMs = 1000, maxMs = 5 * 60 * 
 export async function enqueue(table: SyncTable, recordId: string, op: OutboxOp): Promise<void> {
   if (!isSupabaseConfigured) return;
   if (!DOC_TABLES.has(table) && !isUuid(recordId)) return;
+  // 同じ行に新しい変更が来たら、前の失敗は忘れる（内容が変わっていれば通るかもしれず、
+  // 直し方としても「もう一度操作する」が一番自然なため）。
+  await clearFailed(table, recordId);
   await db.outbox.add({
     table_name: table,
     record_id: recordId,
@@ -118,9 +184,48 @@ export async function enqueue(table: SyncTable, recordId: string, op: OutboxOp):
   });
 }
 
-/** キューに残っている件数（UI の表示用）。 */
+/** キューに残っている件数（送信対象のみ。失敗として外したものは数えない）。 */
 export async function pendingCount(): Promise<number> {
-  return db.outbox.count();
+  const rows = await db.outbox.toArray();
+  return coalesceOutbox(rows.filter((row) => !row.failed_at)).length;
+}
+
+/** 送れずに外した変更（設定画面に出す）。 */
+export async function failedEntries(): Promise<OutboxRow[]> {
+  const rows = await db.outbox.toArray();
+  return coalesceOutbox(rows.filter((row) => row.failed_at));
+}
+
+/** 指定した行の失敗記録を消す（内部用）。 */
+async function clearFailed(table: string, recordId: string): Promise<void> {
+  const stuck = await db.outbox
+    .where("record_id")
+    .equals(recordId)
+    .filter((row) => row.table_name === table && row.failed_at !== undefined)
+    .toArray();
+  if (stuck.length > 0) await db.outbox.bulkDelete(stuck.map((row) => row.seq as number));
+}
+
+/**
+ * 外した変更をもう一度送信対象に戻す。
+ *
+ * サーバー側を直したあと（migration を当てた等）に設定画面から押す。
+ *
+ * @returns 戻した件数
+ */
+export async function retryFailed(): Promise<number> {
+  const rows = (await db.outbox.toArray()).filter((row) => row.failed_at);
+  await db.outbox.bulkPut(
+    rows.map(({ failed_at: _failed, error: _error, ...rest }) => rest as OutboxRow),
+  );
+  return rows.length;
+}
+
+/** 外した変更を捨てる（もう送らなくてよいと判断したとき）。 */
+export async function discardFailed(): Promise<number> {
+  const rows = (await db.outbox.toArray()).filter((row) => row.failed_at);
+  await db.outbox.bulkDelete(rows.map((row) => row.seq as number));
+  return rows.length;
 }
 
 /**
@@ -138,11 +243,15 @@ export async function flushOutbox(
   loadRow: RowLoader = defaultLoader,
 ): Promise<FlushResult> {
   const all = await db.outbox.orderBy("seq").toArray();
-  const entries = coalesceOutbox(all);
-  if (entries.length === 0) return { sent: 0, remaining: 0, stoppedBy: null };
-  if (!isOnline()) return { sent: 0, remaining: entries.length, stoppedBy: "offline" };
+  // 恒久エラーで外した行は送信対象に入れない（手動で戻すまで寝かせる）。
+  const entries = coalesceOutbox(all.filter((row) => !row.failed_at));
+  if (entries.length === 0) return { sent: 0, remaining: 0, stoppedBy: null, failed: 0 };
+  if (!isOnline()) {
+    return { sent: 0, remaining: entries.length, stoppedBy: "offline", failed: 0 };
+  }
 
   let sent = 0;
+  let failed = 0;
   for (const entry of entries) {
     const table = entry.table_name as SyncTable;
     try {
@@ -154,20 +263,52 @@ export async function flushOutbox(
         if (row) await sender.put(table, row);
       }
     } catch (e) {
+      // 直らないと分かっている失敗は、その 1 件だけ外して先へ進む。
+      // ここで打ち切ると、例えば列が足りない 1 件のせいで買い物リストのチェックまで
+      // 永久に送られなくなる。
+      if (e instanceof PermanentSyncError) {
+        await markFailed(entry, e.message);
+        failed++;
+        continue;
+      }
       return {
         sent,
-        remaining: entries.length - sent,
+        remaining: entries.length - sent - failed,
         stoppedBy: e instanceof Error ? e.message : String(e),
+        failed,
       };
     }
     // 畳んだ分もまとめて消す（同じ行の古い操作は送る必要がない）。
-    await db.outbox
-      .where("record_id")
-      .equals(entry.record_id)
-      .filter((row) => row.table_name === entry.table_name)
-      .delete();
+    await deleteEntryRows(entry);
     sent++;
   }
 
-  return { sent, remaining: await db.outbox.count(), stoppedBy: null };
+  return { sent, remaining: await pendingCount(), stoppedBy: null, failed };
+}
+
+/** 畳んだ 1 件に対応する Dexie の行をまとめて消す。 */
+async function deleteEntryRows(entry: OutboxRow): Promise<void> {
+  await db.outbox
+    .where("record_id")
+    .equals(entry.record_id)
+    .filter((row) => row.table_name === entry.table_name && !row.failed_at)
+    .delete();
+}
+
+/**
+ * 1 件を「送れなかったもの」として外す。
+ *
+ * 同じ行の古い操作は畳まれているので、代表の 1 行だけを理由付きで残し、残りは消す
+ * （設定画面に同じ失敗が何件も並ばないように）。
+ */
+async function markFailed(entry: OutboxRow, error: string): Promise<void> {
+  await deleteEntryRows(entry);
+  await db.outbox.add({
+    table_name: entry.table_name,
+    record_id: entry.record_id,
+    op: entry.op,
+    created_at: entry.created_at,
+    failed_at: new Date().toISOString(),
+    error,
+  });
 }
