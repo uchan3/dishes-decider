@@ -125,6 +125,14 @@ export interface ShoppingItemRow {
   source_recipe_ids: string[];
   position: number;
   /**
+   * ユーザーが手で直した数量（F-03-1「家にある分を引く」）。
+   *
+   * 集約結果の `quantity` は献立から毎回計算し直されるので、直した値はここに分けて
+   * 持つ。**作り直しても引き継ぐ**（チェック状態と同じ扱い）。null / 未設定なら
+   * 計算値をそのまま使う。非インデックス列なので Dexie のバージョン更新は不要。
+   */
+  quantity_override?: number | null;
+  /**
    * この項目を最後に変更した時刻。端末間マージでチェック状態の新しい方を選ぶのに使う
    * （非インデックス列なので Dexie のバージョン更新は不要）。
    */

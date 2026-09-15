@@ -92,6 +92,11 @@ export function reconcileShoppingItems(
       is_manual: false,
       source_recipe_ids: item.sourceRecipeIds,
       position: index,
+      // 手で直した数量は作り直しでも保つ（チェック状態と同じ理由。献立が変わって
+      // 必要量が増えても、ユーザーが「家にある分を引いた」意図のほうを優先する）。
+      ...(prev?.quantity_override === undefined
+        ? {}
+        : { quantity_override: prev.quantity_override }),
       // チェック時刻は引き継ぐ（端末間マージで「どちらが新しいか」を判定するため）。
       ...(prev?.updated_at === undefined ? {} : { updated_at: prev.updated_at }),
     };
@@ -194,6 +199,54 @@ export async function removeShoppingItem(id: string): Promise<void> {
   const row = await db.shoppingItems.get(id);
   await db.shoppingItems.delete(id);
   if (row) await queuePlanDoc(row.meal_plan_id);
+}
+
+/**
+ * 表示・買い物に使う数量（純粋関数）。
+ *
+ * 手で直した値があればそれを、無ければ献立から計算した値を返す。
+ *
+ * @example
+ * ```ts
+ * effectiveQuantity({ quantity: 3, quantity_override: 2 }); // → 2（家に 1 個ある）
+ * effectiveQuantity({ quantity: 3 });                        // → 3
+ * ```
+ */
+export function effectiveQuantity(row: {
+  quantity: number | null;
+  quantity_override?: number | null;
+}): number | null {
+  return row.quantity_override ?? row.quantity;
+}
+
+/** 手で直した数量が計算値と食い違っているか（UI で「元 N」を出す判定）。 */
+export function hasQuantityOverride(row: {
+  quantity: number | null;
+  quantity_override?: number | null;
+}): boolean {
+  return (
+    row.quantity_override !== undefined &&
+    row.quantity_override !== null &&
+    row.quantity_override !== row.quantity
+  );
+}
+
+/**
+ * 数量を手で直す（F-03-1「家にある分を引く」）。
+ *
+ * 献立由来の項目は**計算値を残したまま** `quantity_override` に入れる（作り直しても
+ * 消えず、「戻す」で計算値に帰れる）。手動追加の項目は計算値が無いので本体を書き換える。
+ *
+ * @param quantity - 新しい数量。null なら計算値に戻す
+ */
+export async function setItemQuantity(id: string, quantity: number | null): Promise<void> {
+  const row = await db.shoppingItems.get(id);
+  if (!row) return;
+  const patch: Partial<ShoppingItemRow> = row.is_manual
+    ? { quantity }
+    : { quantity_override: quantity };
+  await db.shoppingItems.update(id, { ...patch, updated_at: new Date().toISOString() });
+  await queuePlanDoc(row.meal_plan_id);
 }
 
 /** 項目のチェック状態を更新する（買い出し中の主操作）。 */

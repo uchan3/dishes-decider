@@ -7,9 +7,12 @@ import { startOfWeek, today } from "../lib/date.ts";
 import {
   addManualItem,
   clearChecked,
+  effectiveQuantity,
+  hasQuantityOverride,
   pantryIngredientIds,
   removeShoppingItem,
   setItemChecked,
+  setItemQuantity,
   syncShoppingList,
 } from "../lib/shopping.ts";
 import { loadPlanningSettings } from "../lib/settings.ts";
@@ -43,6 +46,36 @@ export function ShoppingPage() {
   /** 「家にあるかも」を開いているか。 */
   const [showAtHome, setShowAtHome] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  /** 内訳と数量編集を開いている項目。1 つずつしか開かない。 */
+  const [openId, setOpenId] = useState<string | null>(null);
+  /** 数量の入力途中の値（保存を押すまで反映しない）。 */
+  const [qtyDraft, setQtyDraft] = useState("");
+
+  /** 内訳表示に使うレシピ名（id → タイトル）。 */
+  const titleById = useLiveQuery(async () => {
+    const rows = await db.recipes.toArray();
+    return new Map(rows.map((r) => [r.id, r.title] as const));
+  }, []);
+
+  /** 項目の詳細を開く。数量の入力欄は今の値で初期化する。 */
+  function openDetail(row: ShoppingItemRow) {
+    if (openId === row.id) {
+      setOpenId(null);
+      return;
+    }
+    setOpenId(row.id);
+    const current = effectiveQuantity(row);
+    setQtyDraft(current === null ? "" : String(current));
+  }
+
+  /** 入力された数量を保存する（空なら計算値に戻す）。 */
+  function saveQuantity(row: ShoppingItemRow) {
+    const trimmed = qtyDraft.trim();
+    const value = trimmed === "" ? null : Number(trimmed);
+    if (value !== null && !Number.isFinite(value)) return;
+    void setItemQuantity(row.id, value);
+    setOpenId(null);
+  }
 
   // 手動追加フォーム（US-13）。
   const [newName, setNewName] = useState("");
@@ -283,12 +316,27 @@ export function ShoppingPage() {
                     />
                     <span className="shop-item__name">{row.display_name}</span>
                     <span className="shop-item__qty">
-                      {row.quantity !== null && `${row.quantity}${row.unit ?? ""}`}
+                      {effectiveQuantity(row) !== null &&
+                        `${effectiveQuantity(row)}${row.unit ?? ""}`}
+                      {hasQuantityOverride(row) && (
+                        <em className="shop-item__edited" title="手で直した数量">
+                          {" "}
+                          ✎
+                        </em>
+                      )}
                       {row.ambiguous_note && (
                         <em className="shop-item__note"> {row.ambiguous_note}</em>
                       )}
                     </span>
                   </label>
+                  <button
+                    className={openId === row.id ? "icon-btn icon-btn--on" : "icon-btn"}
+                    title="内訳と数量"
+                    aria-label={`${row.display_name} の内訳と数量`}
+                    onClick={() => openDetail(row)}
+                  >
+                    ⋯
+                  </button>
                   {row.is_manual && (
                     <button
                       className="icon-btn"
@@ -298,6 +346,45 @@ export function ShoppingPage() {
                     >
                       ×
                     </button>
+                  )}
+                  {openId === row.id && (
+                    <div className="shop-item__detail">
+                      {row.source_recipe_ids.length > 0 && (
+                        <p className="shop-item__from">
+                          {row.source_recipe_ids
+                            .map((id) => titleById?.get(id) ?? "（削除されたレシピ）")
+                            .join("、")}
+                        </p>
+                      )}
+                      <div className="qty-edit">
+                        <input
+                          type="number"
+                          step="any"
+                          min="0"
+                          className="qty-edit__input"
+                          value={qtyDraft}
+                          onChange={(e) => setQtyDraft(e.target.value)}
+                          aria-label="数量"
+                        />
+                        <span className="qty-edit__unit">{row.unit ?? ""}</span>
+                        <button className="btn btn--small" onClick={() => saveQuantity(row)}>
+                          保存
+                        </button>
+                        {hasQuantityOverride(row) && (
+                          <button
+                            className="btn btn--small"
+                            title={`計算値は ${row.quantity}${row.unit ?? ""}`}
+                            onClick={() => {
+                              void setItemQuantity(row.id, null);
+                              setOpenId(null);
+                            }}
+                          >
+                            元に戻す（{row.quantity}
+                            {row.unit ?? ""}）
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   )}
                 </li>
               ))}
