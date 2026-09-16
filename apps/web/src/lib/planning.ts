@@ -87,9 +87,25 @@ async function loadEligibleRecipes(): Promise<Recipe[]> {
     db.sources.toArray(),
   ]);
   const disabled = new Set(sources.filter((s) => !s.is_enabled).map((s) => s.id));
+  const now = today();
   return recipeRows
     .filter((r) => !(r.source_id !== null && disabled.has(r.source_id)))
+    // 「最近食べた」でスヌーズ中のものは出さない（F-02-3）。期限が来れば自然に戻る。
+    .filter((r) => !(r.snoozed_until && r.snoozed_until > now))
     .map(toRecipe);
+}
+
+/**
+ * この週だけ出さないレシピに加える（F-02-3「気分じゃない」）。
+ *
+ * 恒久除外ほど強くない意思表示を、週の文脈に閉じて持つ。翌週には何事もなく戻る。
+ */
+export async function excludeFromWeek(planId: string, recipeId: string): Promise<void> {
+  const plan = await db.mealPlans.get(planId);
+  if (!plan) return;
+  const current = plan.excluded_recipe_ids ?? [];
+  if (current.includes(recipeId)) return;
+  await savePlan({ ...plan, excluded_recipe_ids: [...current, recipeId] });
 }
 
 /** 1 日分の構成（テンプレ適用後）。 */
@@ -177,6 +193,8 @@ export async function generateWeek(startDate: string): Promise<GeneratedWeek> {
     referenceDate: today(),
     settings: generationSettings(settings),
     pantryScores,
+    // 「今週は気分じゃない」は作り直しでも効かせる（週の意思表示なので）。
+    excludeRecipeIds: existing?.excluded_recipe_ids ?? [],
     rng: Math.random, // UI では再生成のたびに変化させる
   });
 
@@ -208,6 +226,9 @@ export async function generateWeek(startDate: string): Promise<GeneratedWeek> {
     start_date: startDate,
     status: "draft",
     meals,
+    ...(existing?.excluded_recipe_ids === undefined
+      ? {}
+      : { excluded_recipe_ids: existing.excluded_recipe_ids }),
     created_at: nowIso,
     updated_at: nowIso,
   };
@@ -264,7 +285,8 @@ async function reshuffleSlots(
   const regenIds = new Set(regen.map(({ slot }) => slot.id));
 
   // 対象外スロットのレシピは固定 → 候補から除外して重複を防ぐ。
-  const excluded = new Set<string>();
+  // 「今週は気分じゃない」と言われたものもここに混ぜる（F-02-3）。
+  const excluded = new Set<string>(next.excluded_recipe_ids ?? []);
   for (const { slot } of all) {
     if (!regenIds.has(slot.id) && slot.recipe_id) excluded.add(slot.recipe_id);
   }
@@ -394,6 +416,60 @@ export async function setSlotRecipe(
       slot.is_locked = true;
     }),
   );
+}
+
+/**
+ * その日の献立構成（テンプレート）を後から変える（F-02-4）。
+ *
+ * 残る枠は**中身をそのまま引き継ぎ**（slotId が `date#role#index` なので同じ構成の枠は
+ * 一致する）、増えた枠だけを抽選する。減った枠は落ちる。
+ *
+ * **その日に「作った」記録があるときは変更しない。** 枠が減ると記録ごと消えてしまい、
+ * クールダウンや novelty の土台が狂うため（呼び出し側は UI を無効化しておく）。
+ *
+ * @returns 変更後のプラン（何もしなかった場合は渡されたプランのまま）
+ */
+export async function setMealTemplate(
+  plan: MealPlanRow,
+  mealId: string,
+  templateId: TemplateId,
+): Promise<ReshuffleResult> {
+  const unchanged = (p: MealPlanRow): ReshuffleResult => ({
+    plan: p,
+    relaxations: [],
+    unfilledCount: 0,
+    noAlternativeCount: 0,
+  });
+
+  const next = structuredClone(plan) as MealPlanRow;
+  const meal = next.meals.find((m) => m.id === mealId);
+  if (!meal) return unchanged(plan);
+  if (meal.slots.some((slot) => slot.cooked_at)) return unchanged(plan);
+
+  const template = templateById(templateId);
+  const previous = new Map(meal.slots.map((slot) => [slot.id, slot] as const));
+
+  meal.template_id = templateId;
+  meal.is_skipped = templateId === "eat_out";
+  meal.slots = template.slots.map((role, index) => {
+    const id = `${meal.date}#${role}#${index}`;
+    const prev = previous.get(id);
+    return {
+      id,
+      dish_role: role,
+      recipe_id: prev?.recipe_id ?? null,
+      is_locked: prev?.is_locked ?? false,
+      position: index,
+      cooked_at: prev?.cooked_at ?? null,
+    };
+  });
+
+  await savePlan(next);
+
+  // 増えた枠だけ抽選する（既に入っている枠は動かさない）。
+  const added = meal.slots.filter((slot) => slot.recipe_id === null).map((slot) => slot.id);
+  if (added.length === 0 || meal.is_skipped) return unchanged(next);
+  return reshuffleSlots(next, added, false);
 }
 
 /**

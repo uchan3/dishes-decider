@@ -5,16 +5,19 @@ import type { DishRole } from "@recipe-planner/core";
 import { db } from "../db/schema.ts";
 import { RecipePicker } from "../components/RecipePicker.tsx";
 import { startOfWeek, today, weekdayLabel } from "../lib/date.ts";
+import { TEMPLATES, type TemplateId } from "../lib/mealTemplates.ts";
 import {
   clearSlot,
   generateWeek,
   reshuffleMeal,
   reshuffleSlot,
   setMealSkipped,
+  setMealTemplate,
   setSlotRecipe,
   toggleSlotLock,
 } from "../lib/planning.ts";
 import { isSlotCooked, setSlotCooked } from "../lib/cooking.ts";
+import { applyRejectReason, REJECT_REASONS, type RejectReason } from "../lib/reject.ts";
 import { pantryUsedByRecipe, removeFromPantry, type PantryUsage } from "../lib/pantry.ts";
 
 const ROLE_LABEL: Record<string, string> = {
@@ -62,6 +65,8 @@ export function HomePage() {
   const [openSlotId, setOpenSlotId] = useState<string | null>(null);
   /** レシピ選択を開いているスロット。 */
   const [pickingSlot, setPickingSlot] = useState<{ id: string; role: DishRole } | null>(null);
+  /** 直前の再抽選で外したレシピ。理由を訊くために覚えておく（F-02-3）。 */
+  const [rejected, setRejected] = useState<{ recipeId: string; title: string } | null>(null);
 
   /** 非同期アクションを busy 管理で包む。plan 更新は useLiveQuery が拾う。 */
   async function run(action: () => Promise<Notice | void>) {
@@ -84,8 +89,14 @@ export function HomePage() {
 
   function handleSlot(slotId: string) {
     if (!plan) return;
+    // 入れ替える前のレシピを控える（入れ替わったら理由を訊く）。
+    const before = plan.meals.flatMap((m) => m.slots).find((s) => s.id === slotId)?.recipe_id ?? null;
     void run(async () => {
       const r = await reshuffleSlot(plan, slotId);
+      const after = r.plan.meals.flatMap((m) => m.slots).find((s) => s.id === slotId)?.recipe_id ?? null;
+      if (before !== null && after !== before) {
+        setRejected({ recipeId: before, title: titleById?.get(before) ?? before });
+      }
       return { relaxations: r.relaxations, unfilled: r.unfilledCount, noAlternative: r.noAlternativeCount };
     });
   }
@@ -109,6 +120,16 @@ export function HomePage() {
    * 「作った」を記録／取り消しする。レシピの調理回数・最終調理日に反映される。
    * 記録したときは、冷蔵庫から出す候補を提示する（自動では消さない）。
    */
+  /** 却下理由を記録する（F-02-3）。訊くのは入れ替えたあと。 */
+  function handleReject(reason: RejectReason) {
+    const target = rejected;
+    if (!target || !plan) return;
+    setRejected(null);
+    void run(async () => {
+      await applyRejectReason(reason, target.recipeId, plan.id);
+    });
+  }
+
   /** スロットを空にする（F-02-4）。 */
   function handleClear(slotId: string) {
     if (!plan) return;
@@ -126,6 +147,15 @@ export function HomePage() {
     setOpenSlotId(null);
     void run(async () => {
       await setSlotRecipe(plan, target.id, recipeId);
+    });
+  }
+
+  /** その日の構成（テンプレート）を変える（F-02-4）。増えた枠は自動で抽選される。 */
+  function handleTemplate(mealId: string, templateId: TemplateId) {
+    if (!plan) return;
+    void run(async () => {
+      const r = await setMealTemplate(plan, mealId, templateId);
+      return { relaxations: r.relaxations, unfilled: r.unfilledCount, noAlternative: 0 };
     });
   }
 
@@ -232,6 +262,29 @@ export function HomePage() {
         </div>
       )}
 
+      {rejected && (
+        <div className="notice reject-prompt">
+          <p>
+            <strong>{rejected.title}</strong> を外しました。理由を教えてもらえると、次から反映します。
+          </p>
+          <div className="reject-prompt__options">
+            {REJECT_REASONS.map((r) => (
+              <button
+                key={r.value}
+                className="btn btn--small"
+                title={r.hint}
+                onClick={() => handleReject(r.value)}
+              >
+                {r.label}
+              </button>
+            ))}
+            <button className="btn btn--small" onClick={() => setRejected(null)}>
+              なんとなく
+            </button>
+          </div>
+        </div>
+      )}
+
       {notice && notice.relaxations.length > 0 && (
         <p className="notice">
           候補不足のため制約を緩和しました:{" "}
@@ -275,6 +328,20 @@ export function HomePage() {
                       🍽
                     </button>
                   )}
+                  <select
+                    className="day-card__template"
+                    aria-label={`${meal.date} の構成`}
+                    value={meal.template_id ?? "standard"}
+                    // 作った記録がある日は枠を減らせない（記録ごと消えるため）。
+                    disabled={busy || meal.slots.some((s) => isSlotCooked(s.cooked_at))}
+                    onChange={(e) => handleTemplate(meal.id, e.target.value as TemplateId)}
+                  >
+                    {TEMPLATES.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 {meal.is_skipped ? (
                   <p className="slot-list slot--skipped muted">

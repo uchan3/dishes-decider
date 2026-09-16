@@ -971,6 +971,26 @@ a {
   height: 18px;
 }
 
+/* 日ごとの構成（テンプレート）切替。日付ヘッダに小さく置く。 */
+.day-card__template {
+  font: inherit;
+  font-size: 0.72rem;
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+  max-width: 7.5rem;
+}
+
+/* 再抽選のあとに出す却下理由（F-02-3）。押さなくても進めるので軽く出す。 */
+.reject-prompt__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
 /* --- 献立の手動編集（スロットの補助操作・レシピ選択） --- */
 .btn--small {
   padding: 6px 10px;

@@ -59,6 +59,13 @@ export interface RecipeRow {
   cook_count: number;
   last_cooked_at: string | null;
   reject_count: number;
+  /**
+   * この日までは献立に出さない (YYYY-MM-DD)。F-02-3「最近食べた」用。
+   *
+   * 「よそで食べたばかり」を作った記録にすると `cook_count` まで増えてしまうので、
+   * 記録とは別に持つ。非インデックス列なので Dexie のバージョン更新は不要。
+   */
+  snoozed_until?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -82,6 +89,14 @@ export interface MealPlanRow {
   start_date: string;
   status: "draft" | "confirmed" | "archived";
   meals: MealRow[];
+  /**
+   * この週だけ出さないレシピ（F-02-3「気分じゃない」）。
+   *
+   * 恒久除外 (`recipes.is_excluded`) ほど強くない「今はそういう気分じゃない」を、
+   * 週の文脈に閉じて持つ。週ドキュメントごと同期されるので相手の端末にも伝わる。
+   * 非インデックス列なので Dexie のバージョン更新は不要。
+   */
+  excluded_recipe_ids?: string[];
   created_at: string;
   updated_at: string;
 }
