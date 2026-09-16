@@ -9,13 +9,16 @@ import { db, type MealPlanRow, type RecipeRow } from "../db/schema.ts";
 import {
   buildShoppingItems,
   clearSlot,
+  excludeFromWeek,
   generateWeek,
   setMealSkipped,
+  setMealTemplate,
   setSlotRecipe,
 } from "./planning.ts";
 
 const RECIPE_A = "aaaaaaaa-0000-4000-8000-000000000001";
 const RECIPE_B = "bbbbbbbb-0000-4000-8000-000000000002";
+const RECIPE_C = "dddddddd-0000-4000-8000-000000000004";
 const ONION = "cccccccc-0000-4000-8000-000000000003";
 
 const recipe = (id: string, title: string): RecipeRow => ({
@@ -222,5 +225,109 @@ describe("regenerating the week", () => {
     expect(meal?.is_skipped).toBe(true);
     // 外食の日は抽選もしない（候補を無駄に使わないため）。
     expect(meal?.slots.every((s) => s.recipe_id === null)).toBe(true);
+  });
+});
+
+describe("rejection reasons in generation", () => {
+  beforeEach(async () => {
+    await Promise.all([
+      db.mealPlans.clear(),
+      db.recipes.clear(),
+      db.recipeIngredients.clear(),
+      db.ingredients.clear(),
+      db.outbox.clear(),
+      db.settings.clear(),
+      db.pantryItems.clear(),
+    ]);
+  });
+
+  /** その週に使われたレシピ ID。 */
+  const usedIn = (p: MealPlanRow) =>
+    new Set(p.meals.flatMap((m) => m.slots.map((s) => s.recipe_id)).filter(Boolean));
+
+  it("leaves a snoozed dish out until the date passes (最近食べた)", async () => {
+    await db.recipes.bulkPut([
+      { ...recipe(RECIPE_A, "肉じゃが"), snoozed_until: "2099-01-01" },
+      recipe(RECIPE_B, "生姜焼き"),
+    ]);
+
+    const { plan: generated } = await generateWeek("2026-09-14");
+
+    expect(usedIn(generated).has(RECIPE_A)).toBe(false);
+    expect(usedIn(generated).has(RECIPE_B)).toBe(true);
+  });
+
+  it("brings a snoozed dish back once the date has passed", async () => {
+    await db.recipes.bulkPut([{ ...recipe(RECIPE_A, "肉じゃが"), snoozed_until: "2020-01-01" }]);
+
+    const { plan: generated } = await generateWeek("2026-09-14");
+
+    expect(usedIn(generated).has(RECIPE_A)).toBe(true);
+  });
+
+  it("keeps a 'not this week' dish out of a rebuild too (気分じゃない)", async () => {
+    await db.recipes.bulkPut([recipe(RECIPE_A, "肉じゃが"), recipe(RECIPE_B, "生姜焼き")]);
+    const first = await generateWeek("2026-09-14");
+    await excludeFromWeek(first.plan.id, RECIPE_A);
+
+    const again = await generateWeek("2026-09-14");
+
+    expect(usedIn(again.plan).has(RECIPE_A)).toBe(false);
+    // 週の意思表示なので、作り直しても覚えている。
+    expect(again.plan.excluded_recipe_ids).toEqual([RECIPE_A]);
+  });
+});
+
+describe("changing one day's template", () => {
+  beforeEach(async () => {
+    await Promise.all([
+      db.mealPlans.clear(),
+      db.recipes.clear(),
+      db.recipeIngredients.clear(),
+      db.ingredients.clear(),
+      db.outbox.clear(),
+      db.settings.clear(),
+      db.pantryItems.clear(),
+    ]);
+    // 3 つ目が無いと、増えた枠に入れる候補が残らない（週内の重複を避けるため）。
+    await db.recipes.bulkPut([
+      recipe(RECIPE_A, "肉じゃが"),
+      recipe(RECIPE_B, "生姜焼き"),
+      recipe(RECIPE_C, "きんぴら"),
+    ]);
+    await db.mealPlans.put(plan());
+  });
+
+  it("keeps what is already there and fills only the new slots", async () => {
+    // standard（主菜+副菜）に変えると、主菜はそのまま・副菜が増える。
+    const { plan: next } = await setMealTemplate(plan(), "meal-2026-09-14", "standard");
+
+    const meal = next.meals.find((m) => m.id === "meal-2026-09-14");
+    expect(meal?.template_id).toBe("standard");
+    expect(meal?.slots.find((s) => s.id === "2026-09-14#main#0")?.recipe_id).toBe(RECIPE_A);
+    expect(meal?.slots.length).toBeGreaterThan(1);
+    // 増えた枠は抽選されて埋まる（候補がある限り）。
+    expect(meal?.slots.every((s) => s.recipe_id !== null)).toBe(true);
+  });
+
+  it("empties the day when it becomes an eating-out template", async () => {
+    const { plan: next } = await setMealTemplate(plan(), "meal-2026-09-14", "eat_out");
+
+    const meal = next.meals.find((m) => m.id === "meal-2026-09-14");
+    expect(meal?.is_skipped).toBe(true);
+    expect(meal?.slots).toEqual([]);
+  });
+
+  it("refuses to change a day that already has a cooking record", async () => {
+    const cooked = plan();
+    (cooked.meals[0]?.slots[0] as { cooked_at?: string | null }).cooked_at = "2026-09-14";
+    await db.mealPlans.put(cooked);
+
+    const { plan: next } = await setMealTemplate(cooked, "meal-2026-09-14", "one_dish");
+
+    // 枠が減ると「作った」記録ごと消えるので、何もしない。
+    const meal = next.meals.find((m) => m.id === "meal-2026-09-14");
+    expect(meal?.template_id).toBe("standard");
+    expect(meal?.slots).toHaveLength(1);
   });
 });
