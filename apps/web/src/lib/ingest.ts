@@ -11,7 +11,7 @@
  * ところまで。結果の追跡は {@link getImportJob} と Realtime に任せる。
  */
 
-import { validateExternalUrl, type UrlCheck } from "@recipe-planner/core";
+import { deriveSource, validateExternalUrl, type UrlCheck } from "@recipe-planner/core";
 import { supabase, isSupabaseConfigured } from "./supabase.ts";
 import { ingestEndpoint } from "./ingestTokens.ts";
 
@@ -60,6 +60,24 @@ export function normalizeIngestUrl(input: string): UrlCheck {
   return validateExternalUrl(candidate.replace(TRAILING_NOISE, ""));
 }
 
+/**
+ * サーバーから本文を取りに行けない URL か（純粋関数）。
+ *
+ * **Instagram はログイン必須**で、サーバーが取得しても投稿本文は返ってこない。
+ * US-01 は Instagram を Must に置いているのに、黙って失敗ジョブになるのが現状だった。
+ * ここで先に見分けて、**キャプションを貼り付ける経路**に案内する
+ * （端末で取得済みの本文を渡す経路は取り込みパイプラインに元からある）。
+ *
+ * @example
+ * ```ts
+ * needsPastedContent("https://www.instagram.com/p/abc/"); // → true
+ * needsPastedContent("https://example.com/recipe/1");     // → false
+ * ```
+ */
+export function needsPastedContent(url: string): boolean {
+  return deriveSource(url).kind === "instagram";
+}
+
 /** 取り込み依頼の結果。 */
 export interface IngestRequestResult {
   jobId: string;
@@ -68,16 +86,20 @@ export interface IngestRequestResult {
 /**
  * Edge Function に取り込みを依頼する。
  *
- * ブラウザからはページ本文を取得できない（CORS）ため、常にサーバー fetch 経路
- * （`{ url }` のみ）で投げる。Bot 対策の厳しいサイトはここで失敗しうるが、その場合は
- * ジョブの `error` に理由が残り、ショートカット（端末取得の `content` 経路）に
- * 逃がせる。
+ * ブラウザからはページ本文を取得できない（CORS）ため、既定ではサーバー fetch 経路
+ * （`{ url }` のみ）で投げる。Bot 対策の厳しいサイトや Instagram はそこで失敗するので、
+ * **本文を手で貼ってもらって渡す経路**も用意する（`content`。ショートカットが端末側で
+ * 取得した本文を渡すのと同じ入口を使う）。
  *
  * @param url - {@link normalizeIngestUrl} を通した URL
+ * @param content - 貼り付けられた本文（キャプション等）。空なら省略される
  * @returns 作成された取り込みジョブの ID
  * @throws Supabase 未設定・未ログイン・エンドポイントがエラーを返した場合
  */
-export async function submitIngest(url: string): Promise<IngestRequestResult> {
+export async function submitIngest(
+  url: string,
+  content?: string,
+): Promise<IngestRequestResult> {
   if (!isSupabaseConfigured) throw new Error("Supabase が設定されていません。");
   const endpoint = ingestEndpoint();
   if (!endpoint) throw new Error("取り込み先の URL が設定されていません。");
@@ -96,7 +118,11 @@ export async function submitIngest(url: string): Promise<IngestRequestResult> {
         "x-supabase-auth": accessToken,
         authorization: `Bearer ${accessToken}`,
       },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify(
+        content && content.trim() !== ""
+          ? { url, content, contentKind: "text" }
+          : { url },
+      ),
     });
   } catch {
     throw new Error("取り込みサーバーに接続できませんでした。通信状態を確認してください。");
