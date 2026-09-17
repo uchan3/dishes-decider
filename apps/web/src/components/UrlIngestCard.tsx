@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { normalizeIngestUrl, submitIngest } from "../lib/ingest.ts";
+import { needsPastedContent, normalizeIngestUrl, submitIngest } from "../lib/ingest.ts";
 import { getImportJob, isStalled, type ImportJobRow } from "../lib/importJobs.ts";
 import { pullLibrary } from "../lib/sync.ts";
 import { isSupabaseConfigured } from "../lib/supabase.ts";
@@ -23,16 +23,27 @@ const WATCH_TIMEOUT_MS = 3 * 60 * 1000;
 export function UrlIngestCard() {
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
+  /** 本文の貼り付け欄を出しているか（Instagram などサーバーから読めない URL 用）。 */
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasted, setPasted] = useState("");
   const [busy, setBusy] = useState(false);
   /** 追跡中のジョブ。依頼のたびに差し替える。 */
   const [jobId, setJobId] = useState<string | null>(null);
   const [job, setJob] = useState<ImportJobRow | null>(null);
   const [timedOut, setTimedOut] = useState(false);
 
-  const start = useCallback(async (rawUrl: string) => {
+  const start = useCallback(async (rawUrl: string, content?: string) => {
     const checked = normalizeIngestUrl(rawUrl);
     if (!checked.ok) {
       setError(checked.reason);
+      return;
+    }
+    // サーバーから本文を読めない URL は、貼り付けが無いと必ず失敗する。
+    // 投げる前に案内して、無駄な失敗ジョブを作らない。
+    if (needsPastedContent(checked.href) && !content?.trim()) {
+      setPasteOpen(true);
+      setError(null);
+      setJob(null);
       return;
     }
     setBusy(true);
@@ -40,9 +51,11 @@ export function UrlIngestCard() {
     setJob(null);
     setTimedOut(false);
     try {
-      const { jobId: id } = await submitIngest(checked.href);
+      const { jobId: id } = await submitIngest(checked.href, content);
       setJobId(id);
       setInput("");
+      setPasted("");
+      setPasteOpen(false);
     } catch (e) {
       setJobId(null);
       setError(e instanceof Error ? e.message : "取り込みの依頼に失敗しました");
@@ -96,6 +109,11 @@ export function UrlIngestCard() {
     void start(input);
   }
 
+  /** 貼り付けた本文で取り込む。 */
+  function handlePasteSubmit() {
+    void start(input, pasted);
+  }
+
   if (!isSupabaseConfigured) {
     return (
       <div className="card">
@@ -134,6 +152,43 @@ export function UrlIngestCard() {
 
       {error && <p className="notice notice--warn">{error}</p>}
 
+      {pasteOpen && (
+        <div className="notice">
+          <p>
+            {needsPastedContent(input)
+              ? "Instagram はログインが必要で、サーバーからは投稿本文を読めません。"
+              : "このページはサーバーからの読み取りを拒否することがあります。"}
+            <strong>キャプション（材料と作り方の文章）を貼り付けてください。</strong>
+          </p>
+          <textarea
+            className="paste-box"
+            rows={6}
+            value={pasted}
+            onChange={(e) => setPasted(e.target.value)}
+            placeholder={"【材料】\n玉ねぎ 1個\n豚こま切れ肉 200g\n…"}
+            aria-label="投稿の本文"
+          />
+          <div className="btn-row">
+            <button
+              className="btn btn--primary"
+              onClick={handlePasteSubmit}
+              disabled={busy || pasted.trim() === "" || input.trim() === ""}
+            >
+              貼り付けた本文で取り込む
+            </button>
+            <button
+              className="btn"
+              onClick={() => {
+                setPasteOpen(false);
+                setPasted("");
+              }}
+            >
+              やめる
+            </button>
+          </div>
+        </div>
+      )}
+
       {pending && (
         <p className="notice">
           取り込み中です（5〜15 秒ほど）。この画面を離れても処理は続きます。
@@ -167,12 +222,24 @@ export function UrlIngestCard() {
             取り込みに失敗しました{job.error ? `: ${job.error}` : "。"}
           </p>
           <p className="muted">
-            ページが読み取りを拒否している場合があります。iOS ショートカット経由なら
-            本文を端末側で取得するため通ることがあります。
+            ページが読み取りを拒否している場合があります。本文を貼り付けるか、iOS
+            ショートカット（本文を端末側で取得する）から送ると通ることがあります。
           </p>
-          <button className="btn" onClick={() => void start(job.url)} disabled={busy}>
-            もう一度試す
-          </button>
+          <div className="btn-row">
+            <button className="btn" onClick={() => void start(job.url)} disabled={busy}>
+              もう一度試す
+            </button>
+            <button
+              className="btn"
+              onClick={() => {
+                setInput(job.url);
+                setPasteOpen(true);
+              }}
+              disabled={busy}
+            >
+              本文を貼り付ける
+            </button>
+          </div>
         </div>
       )}
     </div>

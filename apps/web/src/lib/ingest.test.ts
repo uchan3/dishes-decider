@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeIngestUrl } from "./ingest.ts";
+import { needsPastedContent, normalizeIngestUrl } from "./ingest.ts";
 
 /** 成功時の href を取り出す（失敗なら理由を見せて落とす）。 */
 function href(input: string): string {
@@ -55,5 +55,19 @@ describe("normalizeIngestUrl", () => {
   it("rejects non-http schemes", () => {
     expect(normalizeIngestUrl("ftp://example.com/x").ok).toBe(false);
     expect(normalizeIngestUrl("javascript:alert(1)").ok).toBe(false);
+  });
+});
+
+describe("needsPastedContent", () => {
+  it("flags Instagram, which never answers a server fetch (US-01 の Must が黙って失敗していた)", () => {
+    expect(needsPastedContent("https://www.instagram.com/p/abc123/")).toBe(true);
+    expect(needsPastedContent("https://www.instagram.com/reel/abc123/")).toBe(true);
+    expect(needsPastedContent("https://instagram.com/ryuji/p/xyz/")).toBe(true);
+  });
+
+  it("leaves everything else on the normal server-fetch path", () => {
+    expect(needsPastedContent("https://www.youtube.com/watch?v=abc")).toBe(false);
+    expect(needsPastedContent("https://delishkitchen.tv/recipes/1")).toBe(false);
+    expect(needsPastedContent("https://cookpad.com/recipe/1")).toBe(false);
   });
 });

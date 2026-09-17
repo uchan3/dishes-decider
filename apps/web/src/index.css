@@ -991,6 +991,21 @@ a {
   margin-top: 6px;
 }
 
+/* Instagram など、サーバーから本文を読めない取り込みの貼り付け欄。 */
+.paste-box {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 8px 10px;
+  margin: 6px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  resize: vertical;
+}
+
 /* --- 献立の手動編集（スロットの補助操作・レシピ選択） --- */
 .btn--small {
   padding: 6px 10px;
