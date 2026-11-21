@@ -18,6 +18,11 @@ supabase/.branches/
 .env.*
 !.env.example
 
+# oh-my-claudecode の運用ファイル（セッション状態・ログ）。
+# `git add -A` で巻き込まれるため明示的に外す。スキルだけは共有したいので例外。
+.omc/
+!.omc/skills/
+
 # OS / editor
 .DS_Store
 .idea/

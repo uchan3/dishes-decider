@@ -85,4 +85,5 @@ jobs:
 
       - name: Deploy ingest
         if: steps.guard.outputs.skip != 'true'
-        run: supabase functions deploy ingest --project-ref "$PROJECT_REF"
+        # --project-ref は v4 で削除予定。CLI 自身が --remote を案内している。
+        run: supabase functions deploy ingest --remote="$PROJECT_REF"
