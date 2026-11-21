@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { needsPastedContent, normalizeIngestUrl } from "./ingest.ts";
+import { normalizeIngestUrl } from "./ingest.ts";
 
 /** 成功時の href を取り出す（失敗なら理由を見せて落とす）。 */
 function href(input: string): string {
@@ -58,16 +58,13 @@ describe("normalizeIngestUrl", () => {
   });
 });
 
-describe("needsPastedContent", () => {
-  it("flags Instagram, which never answers a server fetch (US-01 の Must が黙って失敗していた)", () => {
-    expect(needsPastedContent("https://www.instagram.com/p/abc123/")).toBe(true);
-    expect(needsPastedContent("https://www.instagram.com/reel/abc123/")).toBe(true);
-    expect(needsPastedContent("https://instagram.com/ryuji/p/xyz/")).toBe(true);
-  });
-
-  it("leaves everything else on the normal server-fetch path", () => {
-    expect(needsPastedContent("https://www.youtube.com/watch?v=abc")).toBe(false);
-    expect(needsPastedContent("https://delishkitchen.tv/recipes/1")).toBe(false);
-    expect(needsPastedContent("https://cookpad.com/recipe/1")).toBe(false);
+describe("normalizeIngestUrl / Instagram", () => {
+  it("accepts Instagram links as they are shared (取り込みはサーバー側が埋め込みビューから行う)", () => {
+    expect(href("https://www.instagram.com/p/DcriP0rk9Oi/?igsh=zz")).toBe(
+      "https://www.instagram.com/p/DcriP0rk9Oi/?igsh=zz",
+    );
+    expect(href("https://www.instagram.com/5jipapa.recipe/reel/DEPmxfdyvfk/")).toBe(
+      "https://www.instagram.com/5jipapa.recipe/reel/DEPmxfdyvfk/",
+    );
   });
 });

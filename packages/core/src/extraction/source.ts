@@ -31,6 +31,12 @@ export interface SourceHint {
   channelTitle?: string | null;
   /** HTML の `og:site_name` 等から得られたサイト名。 */
   siteName?: string | null;
+  /**
+   * Instagram のアカウント名（埋め込みビューの HTML から得る）。
+   * `/p/<code>/` 形式の URL には発信者が含まれないため、これが無いと
+   * Instagram の投稿が全部 1 ソースに潰れる。
+   */
+  instagramUser?: string | null;
 }
 
 /** URL のホスト名を返す（先頭の `www.` は落とす）。パースできなければ null。 */
@@ -92,7 +98,8 @@ export function deriveSource(url: string, hint: SourceHint = {}): DerivedSource 
   }
 
   if (host === "instagram.com" || host.endsWith(".instagram.com")) {
-    const user = instagramUser(url);
+    // URL に発信者が無い形（/p/<code>/）でもヒントがあればアカウント単位に分かれる。
+    const user = hint.instagramUser?.trim().toLowerCase() || instagramUser(url);
     return {
       kind: "instagram",
       identifier: user ?? "instagram.com",

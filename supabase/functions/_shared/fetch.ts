@@ -15,6 +15,14 @@ export interface FetchOptions {
   maxBytes?: number;
   /** 最大リダイレクト回数（既定 5）。 */
   maxRedirects?: number;
+  /**
+   * 送信ヘッダの上書き（同名キーは差し替え）。
+   *
+   * 既定はブラウザを装った UA だが、**それでは本文が返らないサイトがある**
+   * （Instagram の埋め込みビューはブラウザ UA だと JS の外殻を返す）。
+   * そういう相手に素性を伝えるために使う。
+   */
+  headers?: Record<string, string>;
 }
 
 /** 取得結果。 */
@@ -49,13 +57,14 @@ export async function safeFetch(rawUrl: string, options: FetchOptions = {}): Pro
         redirect: "manual",
         signal: controller.signal,
         headers: {
-            "user-agent":
-              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
-              "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            accept:
-              "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "accept-language": "ja,en-US;q=0.9,en;q=0.8",
-          },
+          "user-agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+          "accept-language": "ja,en-US;q=0.9,en;q=0.8",
+          ...options.headers,
+        },
       });
     } finally {
       clearTimeout(timer);

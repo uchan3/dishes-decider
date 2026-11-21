@@ -9,6 +9,11 @@
 
 import {
   applySimilarityGate,
+  extractInstagramCaption,
+  extractInstagramUsername,
+  instagramEmbedUrl,
+  isInstagramUrl,
+  INSTAGRAM_FETCH_USER_AGENT,
   extractJsonLdBlocks,
   extractRecipeFromJsonLd,
   extractSiteName,
@@ -63,8 +68,57 @@ export async function runExtraction(
   const yt = await maybeExtractYouTube(url, options);
   if (yt) return yt;
 
+  // Instagram は投稿ページでなく埋め込みビューから取る（ログイン不要）。
+  const ig = await maybeExtractInstagram(url, options);
+  if (ig) return ig;
+
   const fetched = await safeFetch(url);
   return extractFromContent(fetched.finalUrl, fetched.body, "html", options);
+}
+
+/**
+ * Instagram の公開投稿をキャプション付き埋め込みビューから抽出する。
+ *
+ * 投稿ページ (`/p/<code>/`) はログインしていないクライアントには JS の外殻しか
+ * 返さないが、**埋め込みビュー (`/p/<code>/embed/captioned/`) はキャプション全文を
+ * HTML で返す**（ログイン不要。2026-11 に実測）。レシピ系アカウントは材料と作り方を
+ * キャプションに書くので、これで必要な事実が揃う。
+ *
+ * ひとつ罠があり、**ブラウザの User-Agent で叩くと外殻が返る**。`safeFetch` の既定は
+ * ブラウザを装うので、ここでは素性をそのまま名乗る UA に差し替える。
+ *
+ * @returns Instagram でない・shortcode が取れない・キャプションが空なら null
+ *   （呼び出し側は通常の fetch 経路や、貼り付け経路に落ちる）
+ */
+async function maybeExtractInstagram(
+  url: string,
+  options: PipelineOptions,
+): Promise<PipelineResult | null> {
+  if (!isInstagramUrl(url)) return null;
+  const embedUrl = instagramEmbedUrl(url);
+  if (embedUrl === null) return null;
+
+  let html: string;
+  try {
+    const fetched = await safeFetch(embedUrl, {
+      headers: { "user-agent": INSTAGRAM_FETCH_USER_AGENT },
+    });
+    html = fetched.body;
+  } catch (err) {
+    console.log(`[pipeline] instagram embed 取得失敗: ${err instanceof Error ? err.message : err}`);
+    return null;
+  }
+
+  const caption = extractInstagramCaption(html);
+  if (caption === null) {
+    console.log(`[pipeline] instagram: キャプションが取れません url=${url}`);
+    return null;
+  }
+  const user = extractInstagramUsername(html);
+  console.log(`[pipeline] instagram: user=${user ?? "-"} captionLen=${caption.length}`);
+
+  // 収集元はアカウント単位にする（URL が /p/<code>/ だと発信者が分からないため）。
+  return llmExtract(url, caption, null, options, { instagramUser: user });
 }
 
 /**
@@ -119,6 +173,14 @@ export async function extractFromContent(
   // YouTube は Data API 経路を優先（HTML content は可視テキスト化で概要欄が失われるため）。
   const yt = await maybeExtractYouTube(url, options);
   if (yt) return yt;
+
+  // Instagram で端末が取ってきた HTML は JS の外殻なので中身が無い。埋め込みビューを
+  // 先に試す。**人が貼ったテキスト (`kind === "text"`) はそのまま使う**
+  // （わざわざ貼ってくれたものを無視して取りに行く理由が無い）。
+  if (kind === "html" && isInstagramUrl(url)) {
+    const ig = await maybeExtractInstagram(url, options);
+    if (ig) return ig;
+  }
 
   const threshold = options.threshold ?? SIMILARITY_THRESHOLDS.private;
   // 収集元の表示名に使う（識別子はホスト名なので、取れなくても同定はできる）。

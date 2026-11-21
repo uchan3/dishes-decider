@@ -69,3 +69,31 @@ describe("deriveSource", () => {
     });
   });
 });
+
+describe("deriveSource / Instagram のアカウント特定", () => {
+  it("uses the account from the embed view when the url has none", () => {
+    // /p/<code>/ 形式は発信者を含まない。ヒントが無いと全部 1 ソースに潰れる。
+    expect(deriveSource("https://www.instagram.com/p/DcriP0rk9Oi/")).toEqual({
+      kind: "instagram",
+      identifier: "instagram.com",
+      name: "Instagram",
+    });
+    expect(
+      deriveSource("https://www.instagram.com/p/DcriP0rk9Oi/", {
+        instagramUser: "5jipapa.recipe",
+      }),
+    ).toEqual({
+      kind: "instagram",
+      identifier: "5jipapa.recipe",
+      name: "@5jipapa.recipe",
+    });
+  });
+
+  it("prefers the hint over the url (どちらでも同じアカウントに寄る)", () => {
+    expect(
+      deriveSource("https://www.instagram.com/5jipapa.recipe/p/DcriP0rk9Oi/", {
+        instagramUser: "5jipapa.recipe",
+      }).identifier,
+    ).toBe("5jipapa.recipe");
+  });
+});
