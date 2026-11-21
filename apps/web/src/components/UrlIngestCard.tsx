@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { needsPastedContent, normalizeIngestUrl, submitIngest } from "../lib/ingest.ts";
+import { normalizeIngestUrl, submitIngest } from "../lib/ingest.ts";
 import { getImportJob, isStalled, type ImportJobRow } from "../lib/importJobs.ts";
 import { pullLibrary } from "../lib/sync.ts";
 import { isSupabaseConfigured } from "../lib/supabase.ts";
@@ -36,14 +36,6 @@ export function UrlIngestCard() {
     const checked = normalizeIngestUrl(rawUrl);
     if (!checked.ok) {
       setError(checked.reason);
-      return;
-    }
-    // サーバーから本文を読めない URL は、貼り付けが無いと必ず失敗する。
-    // 投げる前に案内して、無駄な失敗ジョブを作らない。
-    if (needsPastedContent(checked.href) && !content?.trim()) {
-      setPasteOpen(true);
-      setError(null);
-      setJob(null);
       return;
     }
     setBusy(true);
@@ -132,7 +124,7 @@ export function UrlIngestCard() {
     <div className="card">
       <h2>URL から取り込む</h2>
       <p className="muted">
-        レシピページや YouTube の URL を貼ると、材料を自動で読み取って登録します。
+        レシピページ・YouTube・Instagram の URL を貼ると、材料を自動で読み取って登録します。
       </p>
 
       <form className="btn-row" onSubmit={handleSubmit}>
@@ -155,10 +147,8 @@ export function UrlIngestCard() {
       {pasteOpen && (
         <div className="notice">
           <p>
-            {needsPastedContent(input)
-              ? "Instagram はログインが必要で、サーバーからは投稿本文を読めません。"
-              : "このページはサーバーからの読み取りを拒否することがあります。"}
-            <strong>キャプション（材料と作り方の文章）を貼り付けてください。</strong>
+            このページはサーバーからの読み取りを拒否することがあります。
+            <strong>本文（材料と作り方の文章）を貼り付けてください。</strong>
           </p>
           <textarea
             className="paste-box"

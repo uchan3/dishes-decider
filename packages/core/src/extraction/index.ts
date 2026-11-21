@@ -17,6 +17,14 @@ export {
 export { applySimilarityGate, type RegenerateStep, type GateOptions } from "./gate.ts";
 export { extractJsonLdBlocks, extractSiteName, htmlToText } from "./html.ts";
 export {
+  isInstagramUrl,
+  instagramShortcode,
+  instagramEmbedUrl,
+  extractInstagramCaption,
+  extractInstagramUsername,
+  INSTAGRAM_FETCH_USER_AGENT,
+} from "./instagram.ts";
+export {
   isYouTubeUrl,
   youtubeVideoId,
   extractYouTubeDescription,
