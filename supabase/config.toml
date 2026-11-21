@@ -92,7 +92,10 @@ openai_api_key = "env(OPENAI_API_KEY)"
 
 # Email testing server. Emails sent with the local dev setup are not actually sent - rather, they
 # are monitored, and you can view the emails that would have been sent from the web interface.
-[inbucket]
+#
+# 以前は [inbucket]。CLI v2.108.0 以降は [local_smtp] で、**新しい CLI は inbucket を
+# 受け付けず deploy ごと失敗する**（CI は latest を入れるため、ある日突然落ちた）。
+[local_smtp]
 enabled = true
 # Port to use for the email testing server web interface.
 port = 54324
