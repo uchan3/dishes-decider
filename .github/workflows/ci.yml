@@ -78,12 +78,16 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # バージョンを固定する。`latest` だと CLI 側の仕様変更（config.toml のキー名、
+      # 確認プロンプトの追加など）で**こちらが何も変えていないのにデプロイが落ちる**。
+      # 上げるときは意図を持って上げる。
       - uses: supabase/setup-cli@v1
         if: steps.guard.outputs.skip != 'true'
         with:
-          version: latest
+          version: 3.2.0
 
       - name: Deploy ingest
         if: steps.guard.outputs.skip != 'true'
-        # --project-ref は v4 で削除予定。CLI 自身が --remote を案内している。
-        run: supabase functions deploy ingest --remote="$PROJECT_REF"
+        # --project-ref は v4 で削除予定なので --remote。--yes は CI（非 TTY）で
+        # 確認プロンプトに答えられないため必須。
+        run: supabase functions deploy ingest --remote="$PROJECT_REF" --yes
